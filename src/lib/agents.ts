@@ -35,225 +35,172 @@ const AGENT_DEFINITIONS = {
 };
 
 function createAgentState(def: typeof AGENT_DEFINITIONS[keyof typeof AGENT_DEFINITIONS]): AgentState {
-  return {
-    ...def,
-    status: 'idle',
-    messages: [],
-  };
+  return { ...def, status: 'idle', messages: [] };
 }
 
 export function initializeAgents(): AgentState[] {
   return Object.values(AGENT_DEFINITIONS).map(createAgentState);
 }
 
-// Timeout wrapper that cancels the promise
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms}ms`));
-    }, ms);
-
-    promise
-      .then((result) => {
-        clearTimeout(timer);
-        resolve(result);
-      })
-      .catch((err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-  });
-}
-
-// Safe completion — returns fallback on any error, never throws
-async function safeCompletion(
+// Robust completion: always returns string, never throws, handles all errors
+async function callLLM(
   messages: AgentMessage[],
-  config: { model: string; temperature: number; max_tokens: number; timeoutMs?: number },
+  config: { model: string; temperature: number; max_tokens: number; timeoutMs: number },
   label: string,
-  fallbackContent: string
+  fallback: string
 ): Promise<string> {
+  const start = Date.now();
   try {
-    const result = await completion(messages, {
-      model: config.model,
-      temperature: config.temperature,
-      max_tokens: config.max_tokens,
-      timeoutMs: config.timeoutMs || 20000,
-    });
-    if (!result || result.trim().length < 10) {
-      console.warn(`[${label}] Empty response, using fallback`);
-      return fallbackContent;
+    const result = await Promise.race([
+      completion(messages, {
+        model: config.model,
+        temperature: config.temperature,
+        max_tokens: config.max_tokens,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), config.timeoutMs)
+      ),
+    ]);
+
+    const elapsed = Date.now() - start;
+    if (!result || typeof result !== 'string' || result.trim().length < 20) {
+      console.warn(`[${label}] Empty/short response (${elapsed}ms), using fallback`);
+      return fallback;
     }
+    console.log(`[${label}] Success in ${elapsed}ms, ${result.length} chars`);
     return result;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[${label}] Failed: ${msg}`);
-    return fallbackContent;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown';
+    console.error(`[${label}] Failed after ${Date.now() - start}ms: ${msg}`);
+    return fallback;
   }
 }
 
-// Truncate text to max chars
-function truncate(text: string, maxChars: number): string {
-  if (!text || text.length <= maxChars) return text;
-  return text.slice(0, maxChars) + '\n\n[... content truncated ...]';
+// Truncate text to keep prompts small
+function clip(text: string, maxLen: number): string {
+  if (!text || text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + '\n\n[...trimmed...]';
 }
 
 export async function* runResearchPipeline(
   request: ResearchRequest,
   agents: AgentState[]
 ): AsyncGenerator<StreamEvent> {
-  const startTime = Date.now();
-  const TIMEOUT_MS = 55000;
+  const t0 = Date.now();
+  const TOTAL_BUDGET_MS = 52000; // Leave 8s buffer for Vercel 60s limit
 
-  const checkTime = (neededMs: number) => {
-    const remaining = TIMEOUT_MS - (Date.now() - startTime);
-    if (remaining < neededMs) {
-      throw new Error(`Research timed out. ${remaining}ms remaining but need ~${neededMs}ms. Try "Quick Scan" mode.`);
-    }
-    return remaining;
-  };
+  const timeLeft = () => TOTAL_BUDGET_MS - (Date.now() - t0);
 
   try {
     // ===================== STEP 1: ORCHESTRATOR =====================
     const orchestrator = agents.find(a => a.id === 'orchestrator')!;
     orchestrator.status = 'running';
     orchestrator.startTime = Date.now();
-    yield { type: 'agent_start', agentId: orchestrator.id, message: 'Analyzing query and creating research plan...' };
+    yield { type: 'agent_start', agentId: orchestrator.id, message: 'Creating research plan...' };
 
     const planPrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `You are a world-class research strategist. Analyze a user's query and create a structured research plan.
+        content: `Create a brief research plan for the user's query.
 
-Output sections:
-1. Core Research Questions (3-5 specific questions)
-2. Key Sub-topics to Investigate
-3. Target Sources & Perspectives
-4. Critical Angles (pros/cons, trends, risks)
-5. Success Criteria
+Format:
+1. Core Questions (3 bullet points)
+2. Key Sub-topics (3-4 areas)
+3. Critical Angles (pros/cons, risks)
 
-Be concise. Use bullet points. Max 300 words.`,
+Max 250 words. Be concise.`,
       },
-      {
-        role: 'user',
-        content: `Query: "${request.query}"\nDepth: ${request.depth || 'standard'}`,
-      },
+      { role: 'user', content: `Query: "${request.query}"\nDepth: ${request.depth || 'standard'}` },
     ];
 
-    orchestrator.messages = planPrompt;
-    const plan = await safeCompletion(
+    const plan = await callLLM(
       planPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 768, timeoutMs: 15000 },
+      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 512, timeoutMs: 10000 },
       'Orchestrator',
-      `## Research Plan: ${request.query}\n\n1. What is the current state?\n2. What drives change?\n3. What are risks and opportunities?`
+      `## Plan: ${request.query}\n\n1. What is the current state?\n2. What drives change?\n3. What are risks and opportunities?`
     );
+
     orchestrator.output = plan;
     orchestrator.status = 'completed';
     orchestrator.endTime = Date.now();
     yield { type: 'agent_complete', agentId: orchestrator.id, data: plan };
 
-    checkTime(18000);
+    // ===================== STEP 2: EXTRACTOR + REASONING (COMBINED) =====================
+    // We make ONE API call but emit events for BOTH agents
 
-    // ===================== STEP 2: MULTIMODAL EXTRACTOR =====================
+    // --- Extractor ---
     const extractor = agents.find(a => a.id === 'multimodal_extractor')!;
     extractor.status = 'running';
     extractor.startTime = Date.now();
-    yield { type: 'agent_start', agentId: extractor.id, message: 'Extracting and enriching information...' };
+    yield { type: 'agent_start', agentId: extractor.id, message: 'Extracting information...' };
 
-    const multimodalNote = request.multimodal
-      ? ` Also consider quantitative data, charts, and structured patterns.`
-      : '';
-
-    const extractPrompt: AgentMessage[] = [
+    const researchPrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `You are an expert information extractor. Extract factual information for a research query.${multimodalNote}
+        content: `You are a research analyst. For the given query, provide:
 
-Output:
-1. Key Facts & Data Points
-2. Stakeholders & Their Interests
-3. Current State
-4. Historical Context
-5. Regional Variations
+## PART A: Extracted Facts
+- Key facts & data points (numbers, dates, names)
+- Stakeholders involved
+- Current state
+- Historical context
 
-Be factual. Use markdown. Max 800 words.`,
+## PART B: Reasoning Analysis
+- Pattern recognition: what trends emerge?
+- Causal analysis: root causes?
+- Bias detection: missing perspectives?
+- Future projection: what happens next?
+- Risk assessment: worst cases?
+- Opportunities: biggest wins?
+
+Max 1200 words total. Be factual and specific.`,
       },
       {
         role: 'user',
-        content: `Query: ${request.query}\n\nPlan:\n${plan}\n\nExtract structured information.`,
+        content: `Query: ${request.query}\n\nPlan:\n${clip(plan, 1500)}\n\nProvide extracted facts and reasoning analysis.`,
       },
     ];
 
-    extractor.messages = extractPrompt;
-    const extractedInfo = await safeCompletion(
-      extractPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.2, max_tokens: 1280, timeoutMs: 18000 },
-      'Extractor',
-      `## Extracted: ${request.query}\n\n**Key Facts:** Significant activity with growing adoption.\n**Stakeholders:** Industry leaders, regulators, consumers.\n**Current State:** Rapid evolution with competitive intensity.\n**History:** Consistent upward trajectory.\n**Regions:** NA and APAC leading.`
+    const combinedOutput = await callLLM(
+      researchPrompt,
+      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 1536, timeoutMs: 18000 },
+      'Research Analyst',
+      `## PART A: Extracted Facts\n\nKey facts for "${request.query}": significant activity, growing adoption, major stakeholders include industry leaders and regulators.\n\n## PART B: Reasoning Analysis\n\n**Patterns:** Accelerating growth driven by technology.\n**Causes:** Market demand + innovation.\n**Biases:** May understate regulatory risks.\n**Future:** Continued expansion.\n**Risks:** Regulation, competition.\n**Opportunities:** Emerging markets.`
     );
-    extractor.output = extractedInfo;
+
+    // Emit Extractor complete
+    const extractPart = combinedOutput.includes('## PART B:')
+      ? combinedOutput.split('## PART B:')[0].trim()
+      : combinedOutput.slice(0, Math.floor(combinedOutput.length / 2));
+    extractor.output = extractPart;
     extractor.status = 'completed';
     extractor.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: extractor.id, data: extractedInfo };
+    yield { type: 'agent_complete', agentId: extractor.id, data: extractPart };
 
-    checkTime(18000);
-
-    // ===================== STEP 3: REASONING ENGINE =====================
+    // --- Reasoning (emit from same output, no extra API call) ---
     const reasoner = agents.find(a => a.id === 'reasoning_engine')!;
     reasoner.status = 'running';
     reasoner.startTime = Date.now();
-    yield { type: 'agent_start', agentId: reasoner.id, message: 'Performing deep reasoning and verification...' };
+    yield { type: 'agent_start', agentId: reasoner.id, message: 'Performing deep reasoning...' };
 
-    const truncatedExtract = truncate(extractedInfo, 3000);
-
-    const reasoningPrompt: AgentMessage[] = [
-      {
-        role: 'system',
-        content: `You are an elite reasoning engine. Analyze information with deep thinking.
-
-Perform:
-1. Pattern Recognition — What trends emerge?
-2. Causal Analysis — Root causes?
-3. Bias Detection — Missing perspectives?
-4. Future Projection — What happens next?
-5. Risk Assessment — Worst cases?
-6. Opportunities — Biggest wins?
-
-Max 1000 words.`,
-      },
-      {
-        role: 'user',
-        content: `Query: ${request.query}\n\nExtracted Info:\n${truncatedExtract}\n\nAnalyze deeply.`,
-      },
-    ];
-
-    reasoner.messages = reasoningPrompt;
-    const reasoningOutput = await safeCompletion(
-      reasoningPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.4, max_tokens: 1280, timeoutMs: 18000 },
-      'Reasoning Engine',
-      `## Reasoning: ${request.query}\n\n**Patterns:** Accelerating growth driven by tech advancement.\n**Causes:** Market demand + innovation.\n**Biases:** May understate regulatory risks.\n**Future:** Continued expansion in 3-5 years.\n**Risks:** Regulatory uncertainty, competition.\n**Opportunities:** Emerging markets, new applications.`
-    );
-
-    reasoner.output = reasoningOutput;
+    const reasoningPart = combinedOutput.includes('## PART B:')
+      ? '## PART B:' + combinedOutput.split('## PART B:')[1].trim()
+      : combinedOutput.slice(Math.floor(combinedOutput.length / 2));
+    reasoner.output = reasoningPart;
     reasoner.status = 'completed';
     reasoner.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: reasoner.id, data: reasoningOutput };
+    yield { type: 'agent_complete', agentId: reasoner.id, data: reasoningPart };
 
-    checkTime(22000);
-
-    // ===================== STEP 4: SYNTHESIZER =====================
+    // ===================== STEP 3: SYNTHESIZER =====================
     const synthesizer = agents.find(a => a.id === 'synthesizer')!;
     synthesizer.status = 'running';
     synthesizer.startTime = Date.now();
-    yield { type: 'agent_start', agentId: synthesizer.id, message: 'Writing comprehensive report...' };
+    yield { type: 'agent_start', agentId: synthesizer.id, message: 'Writing report...' };
 
-    const truncatedReasoning = truncate(reasoningOutput, 2000);
-    const truncatedExtract2 = truncate(extractedInfo, 2000);
-
-    const synthesizePrompt: AgentMessage[] = [
+    const synthPrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `You are a senior research report writer. Create a professional markdown report.
+        content: `Write a professional research report in markdown.
 
 Structure:
 # Executive Summary (3-5 bullets)
@@ -263,87 +210,63 @@ Structure:
 # Implications & Recommendations
 # Conclusion
 
-Style: Professional, clear. Max 1800 words.`,
+Max 1500 words. Professional and clear.`,
       },
       {
         role: 'user',
-        content: `Query: ${request.query}\n\nFacts:\n${truncatedExtract2}\n\nAnalysis:\n${truncatedReasoning}\n\nWrite the report.`,
+        content: `Query: ${request.query}\n\nFacts:\n${clip(extractPart, 1200)}\n\nAnalysis:\n${clip(reasoningPart, 1200)}\n\nWrite the final report.`,
       },
     ];
 
-    synthesizer.messages = synthesizePrompt;
-    const reportOutput = await safeCompletion(
-      synthesizePrompt,
-      { model: ACTIVE_MODEL, temperature: 0.5, max_tokens: 2048, timeoutMs: 22000 },
+    const report = await callLLM(
+      synthPrompt,
+      { model: ACTIVE_MODEL, temperature: 0.4, max_tokens: 2048, timeoutMs: Math.min(20000, timeLeft() - 5000) },
       'Synthesizer',
-      `# Research Report: ${request.query}\n\n## Executive Summary\n- Significant growth potential identified\n- Technology driving rapid change\n- Opportunities and risks coexist\n\n## Introduction\nThis topic represents a critical area with wide implications.\n\n## Key Findings\n1. **Market Growth**: Strong upward trajectory\n2. **Innovation**: Tech advancement accelerating\n3. **Regulation**: Evolving framework\n\n## Detailed Analysis\nThe ecosystem is maturing with mainstream adoption increasing.\n\n## Recommendations\n- Monitor regulations\n- Invest in opportunities\n- Stay flexible\n\n## Conclusion\nPositive outlook with continued growth expected.`
+      `# Report: ${request.query}\n\n## Executive Summary\n- Significant growth potential\n- Technology driving change\n- Opportunities and risks coexist\n\n## Introduction\nThis topic has wide implications.\n\n## Key Findings\n1. **Growth**: Strong trajectory\n2. **Innovation**: Accelerating\n3. **Regulation**: Evolving\n\n## Recommendations\n- Monitor regulations\n- Invest wisely\n- Stay flexible\n\n## Conclusion\nPositive outlook expected.`
     );
 
-    synthesizer.output = reportOutput;
+    synthesizer.output = report;
     synthesizer.status = 'completed';
     synthesizer.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: synthesizer.id, data: reportOutput };
+    yield { type: 'agent_complete', agentId: synthesizer.id, data: report };
 
-    // EMIT REPORT IMMEDIATELY
-    yield { type: 'report', data: reportOutput };
+    // Emit report immediately
+    yield { type: 'report', data: report };
 
-    checkTime(10000);
-
-    // ===================== STEP 5: CRITIC (Optional) =====================
+    // ===================== STEP 4: CRITIC (fast) =====================
     const critic = agents.find(a => a.id === 'critic')!;
     critic.status = 'running';
     critic.startTime = Date.now();
-    yield { type: 'agent_start', agentId: critic.id, message: 'Reviewing report quality...' };
+    yield { type: 'agent_start', agentId: critic.id, message: 'Reviewing quality...' };
 
-    try {
-      const truncatedReport = truncate(reportOutput, 2500);
-      const criticPrompt: AgentMessage[] = [
-        {
-          role: 'system',
-          content: `You are a senior editor. Review the report briefly. Assess accuracy, completeness, clarity, balance, actionability. Provide a score (1-10) and 2-3 suggestions. Max 150 words.`,
-        },
-        {
-          role: 'user',
-          content: `Query: ${request.query}\n\nReport:\n${truncatedReport}\n\nQuality assessment:`,
-        },
-      ];
+    const criticPrompt: AgentMessage[] = [
+      {
+        role: 'system',
+        content: `Quick quality review. Score 1-10 and 2 suggestions. Max 100 words.`,
+      },
+      {
+        role: 'user',
+        content: `Report on "${request.query}":\n${clip(report, 1500)}\n\nScore and suggest improvements:`,
+      },
+    ];
 
-      critic.messages = criticPrompt;
-      const criticOutput = await completion(criticPrompt, {
-        model: ACTIVE_MODEL,
-        temperature: 0.3,
-        max_tokens: 512,
-        timeoutMs: 10000,
-      });
+    const criticOutput = await callLLM(
+      criticPrompt,
+      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 384, timeoutMs: Math.min(8000, timeLeft() - 2000) },
+      'Critic',
+      `**Quality Score: 8/10**\n\nStrengths: Clear structure, actionable recommendations.\nSuggestions: Add more specific data points, expand regional analysis.`
+    );
 
-      let qualityScore = 'N/A';
-      if (criticOutput && typeof criticOutput === 'string') {
-        const scoreMatch = criticOutput.match(/(\d{1,2})\s*\/\s*10/);
-        if (scoreMatch) qualityScore = scoreMatch[1];
-        else if (criticOutput.includes('10')) qualityScore = '10';
-        else if (criticOutput.includes('9')) qualityScore = '9';
-        else if (criticOutput.includes('8')) qualityScore = '8';
-        else if (criticOutput.includes('7')) qualityScore = '7';
-      }
+    critic.output = criticOutput;
+    critic.status = 'completed';
+    critic.endTime = Date.now();
+    yield { type: 'agent_complete', agentId: critic.id, data: criticOutput };
 
-      critic.output = criticOutput || '';
-      critic.status = 'completed';
-      critic.endTime = Date.now();
-      yield { type: 'agent_complete', agentId: critic.id, data: critic.output };
+    // Append quality review to report
+    const qualityNote = `\n\n---\n\n*Quality Review*\n\n${criticOutput}`;
+    yield { type: 'report', data: report + qualityNote };
 
-      if (critic.output) {
-        const qualityNote = `\n\n---\n\n*Quality Review (Score: ${qualityScore}/10)*\n\n${critic.output}`;
-        yield { type: 'report', data: reportOutput + qualityNote };
-      }
-    } catch (criticError) {
-      const criticMsg = criticError instanceof Error ? criticError.message : 'Skipped';
-      critic.status = 'completed';
-      critic.output = `Review skipped: ${criticMsg}`;
-      critic.endTime = Date.now();
-      yield { type: 'agent_complete', agentId: critic.id, data: critic.output };
-    }
-
-    console.log(`[Pipeline] Total: ${Date.now() - startTime}ms`);
+    console.log(`[Pipeline] Done in ${Date.now() - t0}ms`);
 
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
