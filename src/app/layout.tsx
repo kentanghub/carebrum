@@ -19,8 +19,8 @@ export const metadata: Metadata = {
   keywords: [
     "AI research",
     "multi-agent",
-    "MiMo",
-    "Xiaomi",
+    "CanopyWave",
+    "Kimi",
     "research automation",
     "chain-of-thought",
   ],

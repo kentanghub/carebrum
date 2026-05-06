@@ -1,10 +1,10 @@
 import { AgentMessage } from '@/types';
 
 // ===== CONFIGURATION =====
-// Supports any OpenAI-compatible API (Kimi, MiMo, OpenRouter, etc.)
-const API_BASE_URL = process.env.API_BASE_URL || 'https://api.moonshot.cn/v1';
+// Supports any OpenAI-compatible API (Kimi, MiMo, CanopyWave, OpenRouter, etc.)
+const API_BASE_URL = process.env.API_BASE_URL || '';
 const API_KEY = process.env.API_KEY || '';
-const USE_MOCK = !API_KEY || API_KEY === 'demo' || API_KEY === 'your_kimi_api_key_here';
+const USE_MOCK = !API_KEY || API_KEY === 'demo' || API_KEY === 'your_api_key_here';
 
 export interface LLMConfig {
   model: string;
@@ -19,13 +19,13 @@ export const MODELS = {
   MIMO_OMNI: 'mimo-v2-omni',
   MIMO_TTS: 'mimo-v2-tts',
   MIMO_FLASH: 'mimo-v2-flash',
-  
-  // Kimi models (temporary placeholder)
-  KIMI_K2_6: 'kimi-k2-6',
+
+  // CanopyWave models (current provider)
+  CANOPY_KIMI_K2_6: 'kimi-k2.6',
 } as const;
 
 // Current active model - change this when you switch providers
-export const ACTIVE_MODEL = process.env.ACTIVE_MODEL || MODELS.KIMI_K2_6;
+export const ACTIVE_MODEL = process.env.ACTIVE_MODEL || MODELS.CANOPY_KIMI_K2_6;
 
 // ===== MOCK RESPONSES (Fallback when no API key) =====
 function getMockResponse(messages: AgentMessage[], config: LLMConfig): string {
@@ -155,6 +155,12 @@ export async function* streamCompletion(
   if (USE_MOCK) {
     yield* mockStreamResponse(messages, config);
     return;
+  }
+
+  if (!API_BASE_URL) {
+    throw new Error(
+      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://api.canopywave.com/v1).'
+    );
   }
 
   const response = await fetch(`${API_BASE_URL}/chat/completions`, {

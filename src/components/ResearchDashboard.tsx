@@ -203,19 +203,19 @@ export default function ResearchDashboard() {
           <div className="flex items-center gap-3">
             <Logo size={36} animated />
             <div>
-              <h1 className="font-bold text-lg gradient-text tracking-tight">
-                Cerebrum
+              <h1 className="font-bold text-lg text-white tracking-tight drop-shadow-sm">
+                Carebrum
               </h1>
-              <p className="text-[10px] text-gray-500 -mt-0.5 tracking-wide uppercase">
+              <p className="text-[10px] text-gray-400 -mt-0.5 tracking-wide uppercase">
                 Multi-Agent Research System
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-500 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.04]">
-              <Sparkles className="w-3 h-3 text-indigo-400" />
-              Powered by MiMo
+            <span className="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-400 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.04]">
+              <Sparkles className="w-3 h-3 text-cyan-400" />
+              Powered by CanopyWave
             </span>
             <a
               href="https://github.com/kentanghub/carebrum"
