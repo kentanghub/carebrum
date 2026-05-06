@@ -106,34 +106,67 @@ body {
 }
 .prose-invert h1 {
   color: #f9fafb;
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
+}
+@media (min-width: 640px) {
+  .prose-invert h1 {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+  }
 }
 .prose-invert h2 {
   color: #f3f4f6;
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin-top: 1.5rem;
-  margin-bottom: 0.75rem;
-}
-.prose-invert h3 {
-  color: #e5e7eb;
   font-size: 1.1rem;
   font-weight: 600;
   margin-top: 1.25rem;
+  margin-bottom: 0.625rem;
+}
+@media (min-width: 640px) {
+  .prose-invert h2 {
+    font-size: 1.25rem;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+}
+.prose-invert h3 {
+  color: #e5e7eb;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 1rem;
   margin-bottom: 0.5rem;
 }
+@media (min-width: 640px) {
+  .prose-invert h3 {
+    font-size: 1.1rem;
+    margin-top: 1.25rem;
+  }
+}
 .prose-invert p {
-  margin-bottom: 0.75rem;
-  line-height: 1.7;
+  margin-bottom: 0.625rem;
+  line-height: 1.65;
+  font-size: 0.875rem;
+}
+@media (min-width: 640px) {
+  .prose-invert p {
+    margin-bottom: 0.75rem;
+    line-height: 1.7;
+  }
 }
 .prose-invert ul, .prose-invert ol {
-  margin-left: 1.25rem;
-  margin-bottom: 0.75rem;
+  margin-left: 1rem;
+  margin-bottom: 0.625rem;
+}
+@media (min-width: 640px) {
+  .prose-invert ul, .prose-invert ol {
+    margin-left: 1.25rem;
+    margin-bottom: 0.75rem;
+  }
 }
 .prose-invert li {
   margin-bottom: 0.25rem;
+  font-size: 0.875rem;
 }
 .prose-invert strong {
   color: #f9fafb;
@@ -147,19 +180,58 @@ body {
 }
 .prose-invert pre {
   background: rgba(0, 0, 0, 0.4);
-  padding: 1rem;
+  padding: 0.75rem;
   border-radius: 8px;
   overflow-x: auto;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+}
+@media (min-width: 640px) {
+  .prose-invert pre {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+  }
 }
 .prose-invert blockquote {
   border-left: 3px solid #22c55e;
-  padding-left: 1rem;
+  padding-left: 0.75rem;
   margin-left: 0;
   color: #9ca3af;
   font-style: italic;
+  font-size: 0.875rem;
 }
 .prose-invert hr {
   border-color: rgba(255, 255, 255, 0.08);
-  margin: 1.5rem 0;
+  margin: 1.25rem 0;
+}
+@media (min-width: 640px) {
+  .prose-invert hr {
+    margin: 1.5rem 0;
+  }
+}
+.prose-invert table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+}
+@media (min-width: 640px) {
+  .prose-invert table {
+    font-size: 0.875rem;
+  }
+}
+.prose-invert th, .prose-invert td {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+@media (min-width: 640px) {
+  .prose-invert th, .prose-invert td {
+    padding: 0.5rem 0.75rem;
+  }
+}
+.prose-invert th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
 }

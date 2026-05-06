@@ -61,6 +61,14 @@ export async function* runResearchPipeline(
   const startTime = Date.now();
   const TIMEOUT_MS = 55000; // 55 second total timeout (Vercel hobby = 60s)
 
+  // Helper to check remaining time
+  const getRemainingMs = () => TIMEOUT_MS - (Date.now() - startTime);
+  const checkTimeout = (bufferMs = 3000) => {
+    if (getRemainingMs() < bufferMs) {
+      throw new Error('Research timed out. Try "Quick Scan" mode or a simpler query.');
+    }
+  };
+
   try {
     // ===================== STEP 1: ORCHESTRATOR =====================
     const orchestrator = agents.find(a => a.id === 'orchestrator')!;
@@ -71,27 +79,27 @@ export async function* runResearchPipeline(
     const planPrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `You are a world-class research strategist. Your job is to analyze a user's research query and create a highly structured, actionable research plan.
+        content: `You are a world-class research strategist. Analyze a user's query and create a structured research plan.
 
-Output a plan with these sections:
-1. **Core Research Questions** (3-5 specific questions)
-2. **Key Sub-topics to Investigate** (list of areas)
-3. **Target Sources & Perspectives** (academic, industry, regulatory, etc.)
-4. **Critical Angles** (pros/cons, trends, risks, opportunities)
-5. **Success Criteria** (what makes this research complete)
+Output sections:
+1. Core Research Questions (3-5 specific questions)
+2. Key Sub-topics to Investigate
+3. Target Sources & Perspectives
+4. Critical Angles (pros/cons, trends, risks)
+5. Success Criteria
 
-Be concise but thorough. Use bullet points. Max 600 words.`,
+Be concise. Use bullet points. Max 400 words.`,
       },
       {
         role: 'user',
-        content: `Research Query: "${request.query}"\nDesired Depth: ${request.depth || 'standard'}\nMultimodal Analysis: ${request.multimodal ? 'Enabled' : 'Disabled'}`,
+        content: `Research Query: "${request.query}"\nDesired Depth: ${request.depth || 'standard'}`,
       },
     ];
 
     orchestrator.messages = planPrompt;
     const plan = await withTimeout(
-      completion(planPrompt, { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 2048 }),
-      15000,
+      completion(planPrompt, { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 1024 }),
+      12000,
       'Planning phase'
     );
     orchestrator.output = plan;
@@ -99,10 +107,7 @@ Be concise but thorough. Use bullet points. Max 600 words.`,
     orchestrator.endTime = Date.now();
     yield { type: 'agent_complete', agentId: orchestrator.id, data: plan };
 
-    // Check total time
-    if (Date.now() - startTime > TIMEOUT_MS) {
-      throw new Error('Research timed out. Try "Quick Scan" mode or a simpler query.');
-    }
+    checkTimeout();
 
     // ===================== STEP 2: MULTIMODAL EXTRACTOR =====================
     const extractor = agents.find(a => a.id === 'multimodal_extractor')!;
@@ -110,19 +115,24 @@ Be concise but thorough. Use bullet points. Max 600 words.`,
     extractor.startTime = Date.now();
     yield { type: 'agent_start', agentId: extractor.id, message: 'Extracting and enriching information...' };
 
+    // Build extractor prompt based on multimodal flag
+    const multimodalNote = request.multimodal
+      ? `\n\nEnhanced Analysis Mode: Consider visual data representations, charts, tables, and structured data patterns that may relate to this topic. Include references to quantitative trends and data visualizations where relevant.`
+      : '';
+
     const extractPrompt: AgentMessage[] = [
       {
         role: 'system',
         content: `You are an expert information extractor. Given a research query and plan, extract comprehensive, factual information.
 
 Your output must include:
-1. **Key Facts & Data Points** (specific numbers, dates, names where applicable)
-2. **Stakeholder Analysis** (who is involved, their interests)
-3. **Current State** (what is happening now)
-4. **Historical Context** (how we got here)
-5. **Regional/Global Variations** (if applicable)
+1. Key Facts & Data Points (specific numbers, dates, names)
+2. Stakeholder Analysis (who is involved, their interests)
+3. Current State (what is happening now)
+4. Historical Context (how we got here)
+5. Regional/Global Variations (if applicable)
 
-Use markdown. Be factual and specific. Avoid vague statements. Max 1500 words.`,
+Use markdown. Be factual and specific. Avoid vague statements. Max 1200 words.${multimodalNote}`,
       },
       {
         role: 'user',
@@ -132,8 +142,8 @@ Use markdown. Be factual and specific. Avoid vague statements. Max 1500 words.`,
 
     extractor.messages = extractPrompt;
     const extractedInfo = await withTimeout(
-      completion(extractPrompt, { model: ACTIVE_MODEL, temperature: 0.2, max_tokens: 4096 }),
-      20000,
+      completion(extractPrompt, { model: ACTIVE_MODEL, temperature: 0.2, max_tokens: 2048 }),
+      15000,
       'Extraction phase'
     );
     extractor.output = extractedInfo;
@@ -141,9 +151,7 @@ Use markdown. Be factual and specific. Avoid vague statements. Max 1500 words.`,
     extractor.endTime = Date.now();
     yield { type: 'agent_complete', agentId: extractor.id, data: extractedInfo };
 
-    if (Date.now() - startTime > TIMEOUT_MS) {
-      throw new Error('Research timed out during extraction phase.');
-    }
+    checkTimeout();
 
     // ===================== STEP 3: REASONING ENGINE =====================
     const reasoner = agents.find(a => a.id === 'reasoning_engine')!;
@@ -157,14 +165,14 @@ Use markdown. Be factual and specific. Avoid vague statements. Max 1500 words.`,
         content: `You are an elite reasoning engine. Analyze the extracted information with deep, multi-step thinking.
 
 Perform:
-1. **Pattern Recognition** — What trends or patterns emerge?
-2. **Causal Analysis** — What causes what? Root cause analysis.
-3. **Bias Detection** — What perspectives might be missing? What's the counter-argument?
-4. **Future Projection** — Based on current trajectory, what happens next?
-5. **Risk Assessment** — What could go wrong? What's the worst-case scenario?
-6. **Opportunity Mapping** — Where are the biggest opportunities?
+1. Pattern Recognition — What trends or patterns emerge?
+2. Causal Analysis — What causes what? Root cause analysis.
+3. Bias Detection — What perspectives might be missing?
+4. Future Projection — Based on current trajectory, what happens next?
+5. Risk Assessment — What could go wrong? Worst-case scenario?
+6. Opportunity Mapping — Where are the biggest opportunities?
 
-Use clear reasoning chains. Be skeptical and thorough. Max 2000 words.`,
+Use clear reasoning chains. Be skeptical and thorough. Max 1500 words.`,
       },
       {
         role: 'user',
@@ -173,32 +181,30 @@ Use clear reasoning chains. Be skeptical and thorough. Max 2000 words.`,
     ];
 
     reasoner.messages = reasoningPrompt;
-    
+
     let reasoningOutput = '';
-    const reasoningStream = streamCompletion(reasoningPrompt, { 
-      model: ACTIVE_MODEL, 
+    const reasoningStream = streamCompletion(reasoningPrompt, {
+      model: ACTIVE_MODEL,
       temperature: 0.4,
-      max_tokens: 4096 
+      max_tokens: 2048
     });
-    
+
     const reasoningTimeout = setTimeout(() => {
       reasoningStream.return?.();
-    }, 20000);
+    }, 15000);
 
     for await (const chunk of reasoningStream) {
       reasoningOutput += chunk;
       yield { type: 'agent_update', agentId: reasoner.id, message: chunk };
     }
     clearTimeout(reasoningTimeout);
-    
+
     reasoner.output = reasoningOutput;
     reasoner.status = 'completed';
     reasoner.endTime = Date.now();
     yield { type: 'agent_complete', agentId: reasoner.id, data: reasoningOutput };
 
-    if (Date.now() - startTime > TIMEOUT_MS) {
-      throw new Error('Research timed out during reasoning phase.');
-    }
+    checkTimeout();
 
     // ===================== STEP 4: SYNTHESIZER =====================
     const synthesizer = agents.find(a => a.id === 'synthesizer')!;
@@ -232,7 +238,7 @@ Structure:
 # Conclusion
 - Final synthesis
 
-Style: Professional, clear, authoritative. Use markdown tables and formatting. Max 3000 words.`,
+Style: Professional, clear, authoritative. Use markdown tables and formatting. Max 2500 words.`,
       },
       {
         role: 'user',
@@ -241,74 +247,105 @@ Style: Professional, clear, authoritative. Use markdown tables and formatting. M
     ];
 
     synthesizer.messages = synthesizePrompt;
-    
+
     let reportOutput = '';
-    const reportStream = streamCompletion(synthesizePrompt, { 
-      model: ACTIVE_MODEL, 
+    const reportStream = streamCompletion(synthesizePrompt, {
+      model: ACTIVE_MODEL,
       temperature: 0.5,
-      max_tokens: 4096 
+      max_tokens: 4096
     });
-    
+
     const reportTimeout = setTimeout(() => {
       reportStream.return?.();
-    }, 25000);
+    }, 20000);
 
     for await (const chunk of reportStream) {
       reportOutput += chunk;
       yield { type: 'agent_update', agentId: synthesizer.id, message: chunk };
     }
     clearTimeout(reportTimeout);
-    
+
     synthesizer.output = reportOutput;
     synthesizer.status = 'completed';
     synthesizer.endTime = Date.now();
     yield { type: 'agent_complete', agentId: synthesizer.id, data: reportOutput };
 
-    if (Date.now() - startTime > TIMEOUT_MS) {
-      throw new Error('Research timed out during synthesis phase.');
-    }
+    // ALWAYS emit the report first, then try critic as non-blocking
+    yield { type: 'report', data: reportOutput };
 
-    // ===================== STEP 5: CRITIC =====================
+    checkTimeout(8000); // Need at least 8s for critic
+
+    // ===================== STEP 5: CRITIC (Non-blocking) =====================
     const critic = agents.find(a => a.id === 'critic')!;
     critic.status = 'running';
     critic.startTime = Date.now();
     yield { type: 'agent_start', agentId: critic.id, message: 'Reviewing report quality...' };
 
-    const criticPrompt: AgentMessage[] = [
-      {
-        role: 'system',
-        content: `You are a senior editor and quality assurance expert. Review the research report.
+    try {
+      const criticPrompt: AgentMessage[] = [
+        {
+          role: 'system',
+          content: `You are a senior editor and quality assurance expert. Review the research report.
 
 Assess:
-1. **Factual Accuracy** — Any claims that seem unsupported?
-2. **Completeness** — What's missing that should be covered?
-3. **Clarity** — Is anything confusing or poorly explained?
-4. **Balance** — Are multiple perspectives represented fairly?
-5. **Actionability** — Are recommendations specific and useful?
+1. Factual Accuracy — Any claims that seem unsupported?
+2. Completeness — What's missing?
+3. Clarity — Is anything confusing?
+4. Balance — Are multiple perspectives represented?
+5. Actionability — Are recommendations specific?
 
 Provide a brief quality score (1-10) and 2-3 specific improvement suggestions.
-Max 400 words.`,
-      },
-      {
-        role: 'user',
-        content: `Query: ${request.query}\n\nReport:\n${reportOutput}\n\nProvide quality assessment.`,
-      },
-    ];
+Max 300 words.`,
+        },
+        {
+          role: 'user',
+          content: `Query: ${request.query}\n\nReport:\n${reportOutput}\n\nProvide quality assessment.`,
+        },
+      ];
 
-    critic.messages = criticPrompt;
-    const criticOutput = await withTimeout(
-      completion(criticPrompt, { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 1024 }),
-      10000,
-      'Quality review phase'
-    );
-    critic.output = criticOutput;
-    critic.status = 'completed';
-    critic.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: critic.id, data: criticOutput };
+      critic.messages = criticPrompt;
+      const criticOutput = await withTimeout(
+        completion(criticPrompt, { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 512 }),
+        8000,
+        'Quality review phase'
+      );
 
-    // Final report output with critic feedback appended
-    const finalReport = reportOutput + `\n\n---\n\n*Quality Review (Score: ${criticOutput.includes('10') ? '10' : criticOutput.includes('9') ? '9' : '8'}/10)*\n\n${criticOutput}`;
-    yield { type: 'report', data: finalReport };
+      // Safe extraction of quality score
+      let qualityScore = 'N/A';
+      if (criticOutput && typeof criticOutput === 'string') {
+        const scoreMatch = criticOutput.match(/(\d{1,2})\s*\/\s*10/);
+        if (scoreMatch) {
+          qualityScore = scoreMatch[1];
+        } else if (criticOutput.includes('10')) {
+          qualityScore = '10';
+        } else if (criticOutput.includes('9')) {
+          qualityScore = '9';
+        } else if (criticOutput.includes('8')) {
+          qualityScore = '8';
+        } else if (criticOutput.includes('7')) {
+          qualityScore = '7';
+        }
+      }
+
+      critic.output = criticOutput || '';
+      critic.status = 'completed';
+      critic.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: critic.id, data: critic.output };
+
+      // Send quality review as a separate update (report already sent)
+      if (critic.output) {
+        const qualityNote = `\n\n---\n\n*Quality Review (Score: ${qualityScore}/10)*\n\n${critic.output}`;
+        yield { type: 'report', data: reportOutput + qualityNote };
+      }
+    } catch (criticError) {
+      // Critic failure should NOT break the report
+      const criticMsg = criticError instanceof Error ? criticError.message : 'Review skipped';
+      critic.status = 'completed';
+      critic.output = `Quality review skipped: ${criticMsg}`;
+      critic.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: critic.id, data: critic.output };
+      console.log(`[Critic] Non-critical error: ${criticMsg}`);
+    }
 
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';

@@ -318,7 +318,7 @@ export default function ResearchDashboard() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="What would you like to research? Try: 'Impact of generative AI on software development jobs in 2025'"
-                  className={`w-full h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none`}
+                  className={`w-full h-20 sm:h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none`}
                   disabled={isRunning}
                 />
                 <div className="absolute bottom-3 right-3 text-[10px] text-gray-600 font-mono">
@@ -352,7 +352,7 @@ export default function ResearchDashboard() {
               <label className="block text-[10px] text-gray-500 uppercase tracking-wider mb-2">
                 Research Depth
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {DEPTH_OPTIONS.map((option) => (
                   <button
                     key={option.value}
@@ -395,7 +395,7 @@ export default function ResearchDashboard() {
             </div>
 
             {/* Multimodal toggle + Action button */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <div
                   className={`relative w-9 h-5 rounded-full transition-colors ${
@@ -465,8 +465,8 @@ export default function ResearchDashboard() {
 
         {/* Three Column Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left: Agents */}
-          <div className="lg:col-span-4 space-y-4">
+          {/* Left: Agents — order 2 on mobile, 1 on desktop */}
+          <div className="lg:col-span-4 space-y-4 order-2 lg:order-1">
             <div className="flex items-center gap-2 mb-3">
               <BrainCircuit className="w-4 h-4 text-green-400" />
               <h2 className="text-sm font-semibold text-gray-300">
@@ -532,15 +532,15 @@ export default function ResearchDashboard() {
             </div>
           </div>
 
-          {/* Center: Pipeline */}
-          <div className="lg:col-span-3">
+          {/* Center: Pipeline — order 3 on mobile, 2 on desktop */}
+          <div className="lg:col-span-3 order-3 lg:order-2">
             <div className="flex items-center gap-2 mb-3">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <h2 className="text-sm font-semibold text-gray-300">
                 Pipeline
               </h2>
             </div>
-            <div className="glass rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center">
+            <div className="glass rounded-xl p-4 min-h-[80px] lg:min-h-[400px] flex flex-col items-center justify-center">
               {agents.length === 0 ? (
                 <div className="text-center">
                   <div className="relative w-20 h-20 mx-auto mb-4">
@@ -558,40 +558,53 @@ export default function ResearchDashboard() {
                   </p>
                 </div>
               ) : (
-                <div className="w-full space-y-0">
+                <div className="w-full flex flex-row lg:flex-col items-center justify-center gap-0">
                   {agents.map((agent, i) => (
-                    <div key={agent.id} className="flex flex-col items-center">
-                      <motion.div
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        transition={{ delay: i * 0.15 }}
-                        className={`relative w-12 h-12 rounded-full flex items-center justify-center ${
-                          agent.status === 'running'
-                            ? 'bg-green-500/20 text-green-400 ring-2 ring-green-500/30'
-                            : agent.status === 'completed'
-                            ? 'bg-emerald-500/20 text-emerald-400'
-                            : 'bg-white/[0.03] text-gray-600'
-                        }`}
-                      >
-                        {agent.status === 'running' && (
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                        )}
-                        {agent.status === 'completed' && (
-                          <CheckCircle2 className="w-5 h-5" />
-                        )}
-                        {agent.status === 'idle' && (
-                          <span className="text-xs font-mono">{i + 1}</span>
-                        )}
-                      </motion.div>
-                      <span className="text-[10px] text-gray-500 mt-1.5 text-center max-w-[80px]">
-                        {agent.name.split(' ')[0]}
-                      </span>
+                    <div key={agent.id} className="flex items-center">
+                      <div className="flex flex-col items-center">
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{ delay: i * 0.15 }}
+                          className={`relative w-10 h-10 lg:w-12 lg:h-12 rounded-full flex items-center justify-center ${
+                            agent.status === 'running'
+                              ? 'bg-green-500/20 text-green-400 ring-2 ring-green-500/30'
+                              : agent.status === 'completed'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : 'bg-white/[0.03] text-gray-600'
+                          }`}
+                        >
+                          {agent.status === 'running' && (
+                            <Loader2 className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />
+                          )}
+                          {agent.status === 'completed' && (
+                            <CheckCircle2 className="w-4 h-4 lg:w-5 lg:h-5" />
+                          )}
+                          {agent.status === 'idle' && (
+                            <span className="text-[10px] lg:text-xs font-mono">{i + 1}</span>
+                          )}
+                        </motion.div>
+                        <span className="text-[9px] lg:text-[10px] text-gray-500 mt-1 text-center max-w-[60px] lg:max-w-[80px] leading-tight">
+                          {agent.name.split(' ')[0]}
+                        </span>
+                      </div>
+                      {i < agents.length - 1 && (
+                        <motion.div
+                          initial={{ width: 0, height: 0 }}
+                          animate={{ width: 24, height: 2 }}
+                          className={`mx-1 lg:hidden ${
+                            agent.status === 'completed'
+                              ? 'bg-emerald-500/40'
+                              : 'bg-white/[0.04]'
+                          }`}
+                        />
+                      )}
                       {i < agents.length - 1 && (
                         <motion.div
                           initial={{ height: 0 }}
                           animate={{ height: 24 }}
                           transition={{ delay: i * 0.15 + 0.1 }}
-                          className={`w-0.5 my-1 ${
+                          className={`w-0.5 my-1 hidden lg:block ${
                             agent.status === 'completed'
                               ? 'bg-emerald-500/40'
                               : 'bg-white/[0.04]'
@@ -605,8 +618,8 @@ export default function ResearchDashboard() {
             </div>
           </div>
 
-          {/* Right: Report */}
-          <div className="lg:col-span-5">
+          {/* Right: Report — order 1 on mobile, 3 on desktop */}
+          <div className="lg:col-span-5 order-1 lg:order-3">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-green-400" />
