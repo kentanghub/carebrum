@@ -200,21 +200,34 @@ Max 1200 words total. Be factual and specific.`,
     const synthPrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `Write a professional research report in markdown.
+        content: `You are a senior research report writer. Create a concise, high-quality research report.
+
+CRITICAL: The report must directly answer the user's query with clear bullet points.
 
 Structure:
-# Executive Summary (3-5 bullets)
-# Introduction
-# Key Findings (numbered, use **bold**)
-# Detailed Analysis (by sub-topic)
-# Implications & Recommendations
-# Conclusion
+# Direct Answer
+- 3-5 bullet points that directly answer the research query
+- Be specific, not vague. Include numbers/data where possible
 
-Max 1500 words. Professional and clear.`,
+# Research Plan Summary
+- Brief summary of the research strategy used (1 paragraph)
+
+# Key Findings from Agent Analysis
+- Extractor findings: key facts & data discovered
+- Reasoning findings: patterns, causes, risks, opportunities identified
+
+# Detailed Analysis
+- Expand on the most important findings
+- Use tables or bullet points for clarity
+
+# Conclusion
+- Final verdict / recommendation
+
+Style: Concise, factual, well-structured. Max 1500 words.`,
       },
       {
         role: 'user',
-        content: `Query: ${request.query}\n\nFacts:\n${clip(extractPart, 1200)}\n\nAnalysis:\n${clip(reasoningPart, 1200)}\n\nWrite the final report.`,
+        content: `Research Query: ${request.query}\n\n--- RESEARCH PLAN ---\n${clip(plan, 800)}\n\n--- EXTRACTED FACTS ---\n${clip(extractPart, 1000)}\n\n--- REASONING ANALYSIS ---\n${clip(reasoningPart, 1000)}\n\nWrite a report that DIRECTLY ANSWERS the query above.`,
       },
     ];
 
@@ -222,7 +235,7 @@ Max 1500 words. Professional and clear.`,
       synthPrompt,
       { model: ACTIVE_MODEL, temperature: 0.4, max_tokens: 2048, timeoutMs: Math.min(20000, timeLeft() - 5000) },
       'Synthesizer',
-      `# Report: ${request.query}\n\n## Executive Summary\n- Significant growth potential\n- Technology driving change\n- Opportunities and risks coexist\n\n## Introduction\nThis topic has wide implications.\n\n## Key Findings\n1. **Growth**: Strong trajectory\n2. **Innovation**: Accelerating\n3. **Regulation**: Evolving\n\n## Recommendations\n- Monitor regulations\n- Invest wisely\n- Stay flexible\n\n## Conclusion\nPositive outlook expected.`
+      `# Direct Answer: ${request.query}\n\n- The research indicates significant developments in this area\n- Multiple factors are driving current trends\n- Key opportunities and risks have been identified\n\n# Research Plan Summary\nA multi-agent approach was used to analyze the topic comprehensively.\n\n# Key Findings\n1. **Market Growth**: Strong upward trajectory\n2. **Innovation**: Technology accelerating change\n3. **Regulation**: Evolving framework\n\n# Detailed Analysis\nThe ecosystem shows maturity with increasing adoption.\n\n# Conclusion\nPositive outlook with continued growth expected.`
     );
 
     synthesizer.output = report;
