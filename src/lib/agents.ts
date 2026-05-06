@@ -1,39 +1,39 @@
 import { AgentState, AgentMessage, StreamEvent, ResearchRequest } from '@/types';
-import { mimoCompletion, streamMimoCompletion, MIMO_MODELS } from './mimo-client';
+import { completion, streamCompletion, MODELS } from './mimo-client';
 
 const AGENT_DEFINITIONS = {
   ORCHESTRATOR: {
     id: 'orchestrator',
     name: 'Orchestrator Agent',
-    model: MIMO_MODELS.PRO,
+    model: MODELS.MIMO_PRO,
     description: 'Coordinates the entire research workflow and delegates tasks',
     icon: 'Brain',
   },
   MULTIMODAL_EXTRACTOR: {
     id: 'multimodal_extractor',
     name: 'Multimodal Extractor',
-    model: MIMO_MODELS.OMNI,
+    model: MODELS.MIMO_OMNI,
     description: 'Extracts information from text, images, audio, and video sources',
     icon: 'Eye',
   },
   REASONING_ENGINE: {
     id: 'reasoning_engine',
     name: 'Reasoning Engine',
-    model: MIMO_MODELS.PRO,
+    model: MODELS.MIMO_PRO,
     description: 'Performs deep chain-of-thought reasoning and fact verification',
     icon: 'GitBranch',
   },
   SYNTHESIZER: {
     id: 'synthesizer',
     name: 'Report Synthesizer',
-    model: MIMO_MODELS.PRO,
+    model: MODELS.MIMO_PRO,
     description: 'Synthesizes findings into comprehensive, structured reports',
     icon: 'FileText',
   },
   CRITIC: {
     id: 'critic',
     name: 'Quality Critic',
-    model: MIMO_MODELS.PRO,
+    model: MODELS.MIMO_PRO,
     description: 'Reviews and critiques the final output for accuracy and completeness',
     icon: 'CheckCircle',
   },
@@ -76,7 +76,7 @@ export async function* runResearchPipeline(
     ];
 
     orchestrator.messages = planPrompt;
-    const plan = await mimoCompletion(planPrompt, { model: MIMO_MODELS.PRO, temperature: 0.3 });
+    const plan = await completion(planPrompt, { model: MODELS.MIMO_PRO, temperature: 0.3 });
     orchestrator.output = plan;
     orchestrator.status = 'completed';
     orchestrator.endTime = Date.now();
@@ -102,7 +102,7 @@ export async function* runResearchPipeline(
     ];
 
     extractor.messages = extractPrompt;
-    const extractedInfo = await mimoCompletion(extractPrompt, { model: MIMO_MODELS.OMNI, temperature: 0.2, max_tokens: 8192 });
+    const extractedInfo = await completion(extractPrompt, { model: MODELS.MIMO_OMNI, temperature: 0.2, max_tokens: 8192 });
     extractor.output = extractedInfo;
     extractor.status = 'completed';
     extractor.endTime = Date.now();
@@ -132,7 +132,7 @@ export async function* runResearchPipeline(
     
     // Stream the reasoning process
     let reasoningOutput = '';
-    for await (const chunk of streamMimoCompletion(reasoningPrompt, { model: MIMO_MODELS.PRO, temperature: 0.4 })) {
+    for await (const chunk of streamCompletion(reasoningPrompt, { model: MODELS.MIMO_PRO, temperature: 0.4 })) {
       reasoningOutput += chunk;
       yield { type: 'agent_update', agentId: reasoner.id, message: chunk };
     }
@@ -166,7 +166,7 @@ export async function* runResearchPipeline(
     
     // Stream the report generation
     let reportOutput = '';
-    for await (const chunk of streamMimoCompletion(synthesizePrompt, { model: MIMO_MODELS.PRO, temperature: 0.5 })) {
+    for await (const chunk of streamCompletion(synthesizePrompt, { model: MODELS.MIMO_PRO, temperature: 0.5 })) {
       reportOutput += chunk;
       yield { type: 'agent_update', agentId: synthesizer.id, message: chunk };
     }
@@ -196,7 +196,7 @@ export async function* runResearchPipeline(
     ];
 
     critic.messages = criticPrompt;
-    const criticOutput = await mimoCompletion(criticPrompt, { model: MIMO_MODELS.PRO, temperature: 0.3 });
+    const criticOutput = await completion(criticPrompt, { model: MODELS.MIMO_PRO, temperature: 0.3 });
     critic.output = criticOutput;
     critic.status = 'completed';
     critic.endTime = Date.now();
