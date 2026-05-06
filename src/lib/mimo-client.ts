@@ -220,6 +220,12 @@ export async function completion(
     return getMockResponse(messages, config);
   }
 
+  if (!API_BASE_URL) {
+    throw new Error(
+      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://inference.canopywave.io/v1).'
+    );
+  }
+
   const response = await fetch(`${API_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {

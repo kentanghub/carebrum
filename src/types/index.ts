@@ -7,7 +7,7 @@ export interface AgentState {
   id: string;
   name: string;
   status: 'idle' | 'running' | 'completed' | 'error';
-  model: string;
+  model?: string;
   description: string;
   icon: string;
   messages: AgentMessage[];

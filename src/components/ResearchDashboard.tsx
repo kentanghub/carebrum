@@ -95,7 +95,7 @@ export default function ResearchDashboard() {
         signal: controller.signal,
       });
 
-      if (!response.ok) throw new Error('Failed to start research');
+      if (!response.ok) throw new Error(`Failed to start research: ${response.status} ${response.statusText}`);
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body');
@@ -125,7 +125,9 @@ export default function ResearchDashboard() {
       }
     } catch (error) {
       if (error instanceof Error && error.name !== 'AbortError') {
-        addLog(`Error: ${error.message}`);
+        const errMsg = error.message || 'Unknown error occurred';
+        addLog(`✗ Error: ${errMsg}`);
+        console.error('Research error:', error);
       }
     } finally {
       setIsRunning(false);
