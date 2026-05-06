@@ -21,7 +21,7 @@ export const MODELS = {
   MIMO_FLASH: 'mimo-v2-flash',
 
   // CanopyWave models (current provider)
-  CANOPY_KIMI_K2_6: 'kimi-k2.6',
+  CANOPY_KIMI_K2_6: 'moonshotai/kimi-k2.6',
 } as const;
 
 // Current active model - change this when you switch providers
