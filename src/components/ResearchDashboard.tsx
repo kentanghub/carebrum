@@ -196,11 +196,11 @@ export default function ResearchDashboard() {
   const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
-    <div className="relative min-h-screen bg-[#030308] text-gray-200 overflow-x-hidden">
+    <div className="relative min-h-screen bg-[#030806] text-gray-200 overflow-x-hidden">
       <NeuralBackground />
 
       {/* Header */}
-      <header className="relative z-10 border-b border-white/[0.04] backdrop-blur-xl bg-[#030308]/60">
+      <header className="relative z-10 border-b border-white/[0.04] backdrop-blur-xl bg-[#030806]/60">
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Logo size={36} animated />
@@ -216,7 +216,7 @@ export default function ResearchDashboard() {
 
           <div className="flex items-center gap-3">
             <span className="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-400 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.04]">
-              <Sparkles className="w-3 h-3 text-cyan-400" />
+              <Sparkles className="w-3 h-3 text-green-400" />
               Powered by CanopyWave
             </span>
             <a
@@ -250,7 +250,7 @@ export default function ResearchDashboard() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="What would you like to research? Try: 'Impact of generative AI on software development jobs in 2025'"
-                  className="w-full h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none"
+                  className={`w-full h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none`}
                   disabled={isRunning}
                 />
                 <div className="absolute bottom-3 right-3 text-[10px] text-gray-600 font-mono">
@@ -292,7 +292,7 @@ export default function ResearchDashboard() {
                     disabled={isRunning}
                     className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-300 ${
                       depth === option.value
-                        ? 'border-indigo-500/30 bg-indigo-500/[0.08] shadow-[0_0_20px_rgba(99,102,241,0.1)]'
+                        ? 'border-green-500/30 bg-green-500/[0.08] shadow-[0_0_20px_rgba(34,197,94,0.1)]'
                         : 'border-white/[0.04] bg-white/[0.02] hover:border-white/[0.08] hover:bg-white/[0.03]'
                     }`}
                   >
@@ -305,7 +305,7 @@ export default function ResearchDashboard() {
                       <div
                         className={`text-xs font-medium ${
                           depth === option.value
-                            ? 'text-indigo-300'
+                            ? 'text-green-300'
                             : 'text-gray-300'
                         }`}
                       >
@@ -318,7 +318,7 @@ export default function ResearchDashboard() {
                     {depth === option.value && (
                       <motion.div
                         layoutId="depth-indicator"
-                        className="absolute inset-0 rounded-xl ring-1 ring-indigo-500/20"
+                        className="absolute inset-0 rounded-xl ring-1 ring-green-500/20"
                       />
                     )}
                   </button>
@@ -331,7 +331,7 @@ export default function ResearchDashboard() {
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <div
                   className={`relative w-9 h-5 rounded-full transition-colors ${
-                    multimodal ? 'bg-indigo-500' : 'bg-white/[0.06]'
+                    multimodal ? 'bg-green-500' : 'bg-white/[0.06]'
                   }`}
                   onClick={() => !isRunning && setMultimodal(!multimodal)}
                 >
@@ -354,7 +354,7 @@ export default function ResearchDashboard() {
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm transition-all ${
                   isRunning
                     ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
-                    : 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30'
+                    : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/20 hover:shadow-green-500/30'
                 }`}
               >
                 {isRunning ? (
@@ -386,7 +386,7 @@ export default function ResearchDashboard() {
             </div>
             <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"
+                className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-500"
                 animate={{ width: `${progress}%` }}
                 transition={{ duration: 0.5 }}
               />
@@ -399,7 +399,7 @@ export default function ResearchDashboard() {
           {/* Left: Agents */}
           <div className="lg:col-span-4 space-y-4">
             <div className="flex items-center gap-2 mb-3">
-              <BrainCircuit className="w-4 h-4 text-indigo-400" />
+              <BrainCircuit className="w-4 h-4 text-green-400" />
               <h2 className="text-sm font-semibold text-gray-300">
                 Agent Swarm
               </h2>
@@ -451,11 +451,11 @@ export default function ResearchDashboard() {
               </div>
               <div className="glass rounded-xl p-3 h-40 overflow-y-auto font-mono text-[10px] leading-relaxed space-y-0.5">
                 {logs.length === 0 ? (
-                  <span className="text-gray-600">Waiting...</span>
+                  <span className="text-gray-400">Waiting...</span>
                 ) : (
                   logs.map((log, i) => (
-                    <div key={i} className="text-gray-400 break-all">
-                      <span className="text-gray-600">{log}</span>
+                    <div key={i} className="text-gray-200 break-all">
+                      <span className="text-gray-300">{log}</span>
                     </div>
                   ))
                 )}
@@ -475,10 +475,10 @@ export default function ResearchDashboard() {
               {agents.length === 0 ? (
                 <div className="text-center">
                   <div className="relative w-20 h-20 mx-auto mb-4">
-                    <div className="absolute inset-0 rounded-full bg-indigo-500/10 animate-pulse" />
-                    <div className="absolute inset-2 rounded-full bg-indigo-500/5" />
+                    <div className="absolute inset-0 rounded-full bg-green-500/10 animate-pulse" />
+                    <div className="absolute inset-2 rounded-full bg-green-500/5" />
                     <div className="relative w-full h-full flex items-center justify-center">
-                      <BrainCircuit className="w-8 h-8 text-indigo-400/50" />
+                      <BrainCircuit className="w-8 h-8 text-green-400/50" />
                     </div>
                   </div>
                   <p className="text-xs text-gray-500">
@@ -498,10 +498,10 @@ export default function ResearchDashboard() {
                         transition={{ delay: i * 0.15 }}
                         className={`relative w-12 h-12 rounded-full flex items-center justify-center ${
                           agent.status === 'running'
-                            ? 'bg-indigo-500/20 ring-2 ring-indigo-500/40'
+                            ? 'bg-green-500/20 text-green-400 ring-2 ring-green-500/30'
                             : agent.status === 'completed'
-                            ? 'bg-emerald-500/20 ring-2 ring-emerald-500/40'
-                            : 'bg-white/[0.03] ring-1 ring-white/[0.06]'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : 'bg-white/[0.03] text-gray-600'
                         }`}
                       >
                         {agent.status === 'running' && (
@@ -596,29 +596,29 @@ export default function ResearchDashboard() {
         <footer className="mt-12 pt-8 border-t border-white/[0.04] text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Logo size={24} />
-            <span className="text-sm font-semibold gradient-text">Cerebrum</span>
+            <span className="text-sm font-semibold text-green-400">Carebrum</span>
           </div>
-          <p className="text-[10px] text-gray-600">
-            Multi-Agent Research System • Built for Xiaomi MiMo Orbit 100T
+          <p className="text-[10px] text-gray-500">
+            Multi-Agent Research System • Powered by AI
           </p>
           <div className="flex items-center justify-center gap-4 mt-3">
             <a
               href="https://github.com/kentanghub/carebrum"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-green-400 transition-colors"
             >
               <Code2 className="w-3 h-3" />
               GitHub
             </a>
             <a
-              href="https://platform.xiaomimimo.com"
+              href="https://carebrum.vercel.app"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-green-400 transition-colors"
             >
               <ExternalLink className="w-3 h-3" />
-              MiMo Platform
+              Live Demo
             </a>
           </div>
         </footer>

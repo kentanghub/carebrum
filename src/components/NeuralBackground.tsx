@@ -83,7 +83,7 @@ export default function NeuralBackground() {
         if (Math.abs(p.vy) < 0.1) p.vy += (Math.random() - 0.5) * 0.1;
       });
 
-      // Draw connections
+      // Draw connections - green theme
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const dx = particles[i].x - particles[j].x;
@@ -95,25 +95,25 @@ export default function NeuralBackground() {
             ctx.beginPath();
             ctx.moveTo(particles[i].x, particles[i].y);
             ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.strokeStyle = `rgba(99, 102, 241, ${opacity})`;
+            ctx.strokeStyle = `rgba(34, 197, 94, ${opacity})`;
             ctx.lineWidth = 0.5;
             ctx.stroke();
           }
         }
       }
 
-      // Draw particles
+      // Draw particles - green theme
       particles.forEach((p) => {
         const pulseFactor = 1 + Math.sin(p.pulse) * 0.3;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius * pulseFactor, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(139, 92, 246, ${p.opacity})`;
+        ctx.fillStyle = `rgba(74, 222, 128, ${p.opacity})`;
         ctx.fill();
 
         // Glow
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius * pulseFactor * 3, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(99, 102, 241, ${p.opacity * 0.1})`;
+        ctx.fillStyle = `rgba(34, 197, 94, ${p.opacity * 0.1})`;
         ctx.fill();
       });
 

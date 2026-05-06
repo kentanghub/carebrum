@@ -30,11 +30,11 @@ const statusConfig = {
     glow: '',
   },
   running: {
-    border: 'border-indigo-500/30',
-    bg: 'bg-indigo-500/[0.08]',
-    text: 'text-indigo-300',
-    icon: <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />,
-    glow: 'shadow-[0_0_20px_rgba(99,102,241,0.15)]',
+    border: 'border-green-500/30',
+    bg: 'bg-green-500/[0.08]',
+    text: 'text-green-300',
+    icon: <Loader2 className="w-4 h-4 animate-spin text-green-400" />,
+    glow: 'shadow-[0_0_20px_rgba(34,197,94,0.15)]',
   },
   completed: {
     border: 'border-emerald-500/30',
@@ -53,19 +53,19 @@ const statusConfig = {
 };
 
 const agentColors: Record<string, string> = {
-  orchestrator: 'from-indigo-500 to-violet-500',
-  multimodal_extractor: 'from-cyan-500 to-blue-500',
-  reasoning_engine: 'from-amber-500 to-orange-500',
-  synthesizer: 'from-emerald-500 to-teal-500',
-  critic: 'from-pink-500 to-rose-500',
+  orchestrator: 'from-green-500 to-emerald-500',
+  multimodal_extractor: 'from-teal-500 to-green-500',
+  reasoning_engine: 'from-lime-500 to-green-500',
+  synthesizer: 'from-emerald-500 to-green-500',
+  critic: 'from-green-400 to-emerald-400',
 };
 
 const agentGlowColors: Record<string, string> = {
-  orchestrator: 'shadow-indigo-500/20',
-  multimodal_extractor: 'shadow-cyan-500/20',
-  reasoning_engine: 'shadow-amber-500/20',
+  orchestrator: 'shadow-green-500/20',
+  multimodal_extractor: 'shadow-teal-500/20',
+  reasoning_engine: 'shadow-lime-500/20',
   synthesizer: 'shadow-emerald-500/20',
-  critic: 'shadow-pink-500/20',
+  critic: 'shadow-green-400/20',
 };
 
 interface AgentNodeProps {
@@ -76,8 +76,8 @@ interface AgentNodeProps {
 
 export default function AgentNode({ agent, isActive, index }: AgentNodeProps) {
   const status = statusConfig[agent.status];
-  const colorClass = agentColors[agent.id] || 'from-indigo-500 to-violet-500';
-  const glowColor = agentGlowColors[agent.id] || 'shadow-indigo-500/20';
+  const colorClass = agentColors[agent.id] || 'from-green-500 to-emerald-500';
+  const glowColor = agentGlowColors[agent.id] || 'shadow-green-500/20';
 
   return (
     <motion.div
@@ -85,7 +85,7 @@ export default function AgentNode({ agent, isActive, index }: AgentNodeProps) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ delay: index * 0.1, duration: 0.4, ease: 'easeOut' }}
       className={`relative rounded-xl border ${status.border} ${status.bg} ${status.glow} ${
-        isActive ? `ring-1 ring-indigo-500/30 ${glowColor} shadow-[0_0_30px_rgba(99,102,241,0.15)]` : ''
+        isActive ? `ring-1 ring-green-500/30 ${glowColor} shadow-[0_0_30px_rgba(34,197,94,0.15)]` : ''
       } overflow-hidden transition-all duration-500`}
     >
       {/* Active shimmer effect */}
@@ -105,7 +105,7 @@ export default function AgentNode({ agent, isActive, index }: AgentNodeProps) {
           >
             {iconMap[agent.icon] || <Brain className="w-5 h-5" />}
             {isActive && (
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-[#030308] animate-pulse" />
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-[#030806] animate-pulse" />
             )}
           </div>
 
