@@ -23,6 +23,10 @@ import {
   BrainCircuit,
   Code2,
   FileText,
+  Eye,
+  GitBranch,
+  CheckCircle,
+  Brain,
 } from 'lucide-react';
 
 const DEPTH_OPTIONS = [
@@ -38,14 +42,14 @@ const DEPTH_OPTIONS = [
     label: 'Standard',
     desc: 'Balanced depth ~2min',
     icon: <BookOpen className="w-4 h-4" />,
-    color: 'from-violet-500 to-purple-500',
+    color: 'from-emerald-500 to-green-500',
   },
   {
     value: 'deep',
     label: 'Deep Research',
     desc: 'Thorough analysis ~5min',
     icon: <Telescope className="w-4 h-4" />,
-    color: 'from-pink-500 to-rose-500',
+    color: 'from-green-500 to-lime-500',
   },
 ];
 
@@ -54,6 +58,50 @@ const SAMPLE_QUERIES = [
   'Sustainable energy adoption barriers in Southeast Asia',
   'The future of decentralized finance and regulatory challenges',
   'Quantum computing applications in pharmaceutical drug discovery',
+];
+
+// Default agent definitions for frontend initialization
+const DEFAULT_AGENTS: AgentState[] = [
+  {
+    id: 'orchestrator',
+    name: 'Orchestrator Agent',
+    status: 'idle',
+    description: 'Coordinates the entire research workflow and delegates tasks',
+    icon: 'Brain',
+    messages: [],
+  },
+  {
+    id: 'multimodal_extractor',
+    name: 'Multimodal Extractor',
+    status: 'idle',
+    description: 'Extracts information from text, images, audio, and video sources',
+    icon: 'Eye',
+    messages: [],
+  },
+  {
+    id: 'reasoning_engine',
+    name: 'Reasoning Engine',
+    status: 'idle',
+    description: 'Performs deep chain-of-thought reasoning and fact verification',
+    icon: 'GitBranch',
+    messages: [],
+  },
+  {
+    id: 'synthesizer',
+    name: 'Report Synthesizer',
+    status: 'idle',
+    description: 'Synthesizes findings into comprehensive, structured reports',
+    icon: 'FileText',
+    messages: [],
+  },
+  {
+    id: 'critic',
+    name: 'Quality Critic',
+    status: 'idle',
+    description: 'Reviews and critiques the final output for accuracy and completeness',
+    icon: 'CheckCircle',
+    messages: [],
+  },
 ];
 
 export default function ResearchDashboard() {
@@ -69,7 +117,7 @@ export default function ResearchDashboard() {
   const abortRef = useRef<AbortController | null>(null);
 
   const addLog = useCallback((message: string) => {
-    setLogs((prev) => [...prev.slice(-40), message]);
+    setLogs((prev) => [...prev.slice(-100), message]);
   }, []);
 
   const runResearch = async () => {
@@ -78,7 +126,7 @@ export default function ResearchDashboard() {
     setIsRunning(true);
     setReport('');
     setLogs([]);
-    setAgents([]);
+    setAgents(DEFAULT_AGENTS.map(a => ({ ...a }))); // Initialize agents
     setActiveAgent(null);
     setShowReport(false);
 
@@ -138,29 +186,49 @@ export default function ResearchDashboard() {
   const handleEvent = (event: StreamEvent) => {
     switch (event.type) {
       case 'agent_start':
-        setAgents((prev) =>
-          prev.map((a) =>
-            a.id === event.agentId ? { ...a, status: 'running' } : a
-          )
-        );
+        setAgents((prev) => {
+          const exists = prev.find((a) => a.id === event.agentId);
+          if (exists) {
+            return prev.map((a) =>
+              a.id === event.agentId ? { ...a, status: 'running' } : a
+            );
+          }
+          // Add agent if not exists
+          const defaultAgent = DEFAULT_AGENTS.find((a) => a.id === event.agentId);
+          if (defaultAgent) {
+            return [...prev, { ...defaultAgent, status: 'running' }];
+          }
+          return prev;
+        });
         setActiveAgent(event.agentId || null);
         if (event.message) addLog(`→ ${event.agentId}: ${event.message}`);
         break;
 
       case 'agent_update':
         if (event.message) {
-          addLog(`  ${event.message.substring(0, 80)}...`);
+          const cleanMsg = event.message.replace(/\n/g, ' ').trim();
+          if (cleanMsg.length > 5) {
+            addLog(`  ${cleanMsg.substring(0, 120)}${cleanMsg.length > 120 ? '...' : ''}`);
+          }
         }
         break;
 
       case 'agent_complete':
-        setAgents((prev) =>
-          prev.map((a) =>
-            a.id === event.agentId
-              ? { ...a, status: 'completed', output: event.data }
-              : a
-          )
-        );
+        setAgents((prev) => {
+          const exists = prev.find((a) => a.id === event.agentId);
+          if (exists) {
+            return prev.map((a) =>
+              a.id === event.agentId
+                ? { ...a, status: 'completed', output: event.data }
+                : a
+            );
+          }
+          const defaultAgent = DEFAULT_AGENTS.find((a) => a.id === event.agentId);
+          if (defaultAgent) {
+            return [...prev, { ...defaultAgent, status: 'completed', output: event.data }];
+          }
+          return prev;
+        });
         if (event.message) addLog(`✓ ${event.agentId}: completed`);
         break;
 
@@ -186,9 +254,26 @@ export default function ResearchDashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cerebrum-report-${Date.now()}.md`;
+    a.download = `carebrum-report-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const downloadPDF = async () => {
+    if (typeof window === 'undefined') return;
+    const html2pdf = (await import('html2pdf.js')).default;
+    const element = document.getElementById('report-content');
+    if (!element) return;
+    
+    const opt = {
+      margin: 1,
+      filename: `carebrum-report-${Date.now()}.pdf`,
+      image: { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' as const }
+    };
+    
+    html2pdf().set(opt).from(element).save();
   };
 
   const completedCount = agents.filter((a) => a.status === 'completed').length;
@@ -384,7 +469,7 @@ export default function ResearchDashboard() {
               <span>Research Progress</span>
               <span>{Math.round(progress)}%</span>
             </div>
-            <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
+            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
               <motion.div
                 className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-500"
                 animate={{ width: `${progress}%` }}
@@ -449,13 +534,13 @@ export default function ResearchDashboard() {
                   System Logs
                 </h3>
               </div>
-              <div className="glass rounded-xl p-3 h-40 overflow-y-auto font-mono text-[10px] leading-relaxed space-y-0.5">
+              <div className="glass rounded-xl p-3 h-52 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-1">
                 {logs.length === 0 ? (
                   <span className="text-gray-400">Waiting...</span>
                 ) : (
                   logs.map((log, i) => (
                     <div key={i} className="text-gray-200 break-all">
-                      <span className="text-gray-300">{log}</span>
+                      <span className="text-gray-100">{log}</span>
                     </div>
                   ))
                 )}
@@ -463,7 +548,7 @@ export default function ResearchDashboard() {
             </div>
           </div>
 
-          {/* Center: Visualization */}
+          {/* Center: Pipeline */}
           <div className="lg:col-span-3">
             <div className="flex items-center gap-2 mb-3">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -505,29 +590,28 @@ export default function ResearchDashboard() {
                         }`}
                       >
                         {agent.status === 'running' && (
-                          <span className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping" />
+                          <Loader2 className="w-5 h-5 animate-spin" />
                         )}
-                        <span
-                          className={`relative text-xs font-bold ${
-                            agent.status === 'running'
-                              ? 'text-indigo-300'
-                              : agent.status === 'completed'
-                              ? 'text-emerald-300'
-                              : 'text-gray-600'
-                          }`}
-                        >
-                          {i + 1}
-                        </span>
+                        {agent.status === 'completed' && (
+                          <CheckCircle2 className="w-5 h-5" />
+                        )}
+                        {agent.status === 'idle' && (
+                          <span className="text-xs font-mono">{i + 1}</span>
+                        )}
                       </motion.div>
-                      <p className="text-[10px] text-gray-500 mt-1.5 text-center">
+                      <span className="text-[10px] text-gray-500 mt-1.5 text-center max-w-[80px]">
                         {agent.name.split(' ')[0]}
-                      </p>
+                      </span>
                       {i < agents.length - 1 && (
                         <motion.div
                           initial={{ height: 0 }}
-                          animate={{ height: 32 }}
-                          transition={{ delay: i * 0.15 + 0.2 }}
-                          className="w-px bg-gradient-to-b from-white/[0.08] to-white/[0.02] my-1"
+                          animate={{ height: 24 }}
+                          transition={{ delay: i * 0.15 + 0.1 }}
+                          className={`w-0.5 my-1 ${
+                            agent.status === 'completed'
+                              ? 'bg-emerald-500/40'
+                              : 'bg-white/[0.04]'
+                          }`}
                         />
                       )}
                     </div>
@@ -541,42 +625,37 @@ export default function ResearchDashboard() {
           <div className="lg:col-span-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-violet-400" />
+                <FileText className="w-4 h-4 text-green-400" />
                 <h2 className="text-sm font-semibold text-gray-300">
                   Research Report
                 </h2>
               </div>
               {report && (
-                <motion.button
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  onClick={downloadReport}
-                  className="flex items-center gap-1.5 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-500/10"
-                >
-                  <Download className="w-3 h-3" />
-                  Download .md
-                </motion.button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={downloadReport}
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20"
+                  >
+                    <Download className="w-3 h-3" />
+                    MD
+                  </button>
+                  <button
+                    onClick={downloadPDF}
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20"
+                  >
+                    <FileText className="w-3 h-3" />
+                    PDF
+                  </button>
+                </div>
               )}
             </div>
-
-            <div className="glass rounded-xl min-h-[500px] overflow-hidden">
-              {report ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="p-6 prose-invert text-sm overflow-y-auto max-h-[700px]"
-                >
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {report}
-                  </ReactMarkdown>
-                </motion.div>
-              ) : (
-                <div className="flex flex-col items-center justify-center min-h-[500px] text-center p-8">
-                  <div className="relative w-16 h-16 mb-4">
-                    <div className="absolute inset-0 rounded-full border border-white/[0.04]" />
-                    <div className="absolute inset-0 rounded-full border border-t-indigo-500/20 animate-spin" />
-                    <div className="absolute inset-3 rounded-full bg-white/[0.02] flex items-center justify-center">
-                      <FileText className="w-5 h-5 text-gray-600" />
+            <div className="glass rounded-xl p-5 min-h-[400px]">
+              {!showReport || !report ? (
+                <div className="h-full flex flex-col items-center justify-center text-center py-16">
+                  <div className="relative w-20 h-20 mx-auto mb-4">
+                    <div className="absolute inset-0 rounded-full bg-green-500/10 animate-pulse" />
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      <FileText className="w-8 h-8 text-green-400/50" />
                     </div>
                   </div>
                   <p className="text-xs text-gray-500">
@@ -586,6 +665,12 @@ export default function ResearchDashboard() {
                     Start a research query and watch the agents collaborate in
                     real-time
                   </p>
+                </div>
+              ) : (
+                <div id="report-content" className="prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {report}
+                  </ReactMarkdown>
                 </div>
               )}
             </div>
