@@ -1,7 +1,7 @@
 import { AgentMessage } from '@/types';
 
 // ===== CONFIGURATION =====
-// Supports any OpenAI-compatible API (Kimi, MiMo, CanopyWave, OpenRouter, etc.)
+// Supports any OpenAI-compatible API (Kimi, MiMo, Bluesminds, OpenRouter, etc.)
 const API_BASE_URL = process.env.API_BASE_URL || '';
 const API_KEY = process.env.API_KEY || '';
 const USE_MOCK = !API_KEY || API_KEY === 'demo' || API_KEY === 'your_api_key_here';
@@ -20,12 +20,12 @@ export const MODELS = {
   MIMO_TTS: 'mimo-v2-tts',
   MIMO_FLASH: 'mimo-v2-flash',
 
-  // CanopyWave models (current provider)
-  CANOPY_KIMI_K2_6: 'moonshotai/kimi-k2.6',
+  // Bluesminds models (current provider)
+  BLUESMINDS_DEEPSEEK: 'deepseek.v3.2',
 } as const;
 
 // Current active model - change this when you switch providers
-export const ACTIVE_MODEL = process.env.ACTIVE_MODEL || MODELS.CANOPY_KIMI_K2_6;
+export const ACTIVE_MODEL = process.env.ACTIVE_MODEL || MODELS.BLUESMINDS_DEEPSEEK;
 
 // ===== MOCK RESPONSES (Fallback when no API key) =====
 function getMockResponse(messages: AgentMessage[], config: LLMConfig): string {
@@ -159,7 +159,7 @@ export async function* streamCompletion(
 
   if (!API_BASE_URL) {
     throw new Error(
-      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://api.canopywave.com/v1).'
+      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://api.bluesminds.ai/v1).'
     );
   }
 
@@ -236,7 +236,7 @@ export async function completion(
 
   if (!API_BASE_URL) {
     throw new Error(
-      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://inference.canopywave.io/v1).'
+      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://api.bluesminds.ai/v1).'
     );
   }
 

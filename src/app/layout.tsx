@@ -16,11 +16,11 @@ export const metadata: Metadata = {
   title: "Cerebrum — Multi-Agent Research System",
   description:
     "A sophisticated multi-agent research system powered by advanced AI models. Orchestrates collaborative AI agents to perform autonomous deep-dive research and produce publication-quality reports.",
-  keywords: [
+    keywords: [
     "AI research",
     "multi-agent",
-    "CanopyWave",
-    "Kimi",
+    "Bluesminds",
+    "DeepSeek",
     "research automation",
     "chain-of-thought",
   ],

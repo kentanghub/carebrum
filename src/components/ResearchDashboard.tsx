@@ -243,23 +243,6 @@ export default function ResearchDashboard() {
     URL.revokeObjectURL(url);
   };
 
-  const downloadPDF = async () => {
-    if (typeof window === 'undefined') return;
-    const html2pdf = (await import('html2pdf.js')).default;
-    const element = document.getElementById('report-content');
-    if (!element) return;
-    
-    const opt = {
-      margin: 1,
-      filename: `carebrum-report-${Date.now()}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' as const }
-    };
-    
-    html2pdf().set(opt).from(element).save();
-  };
-
   const completedCount = agents.filter((a) => a.status === 'completed').length;
   const totalCount = 3;
   const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
@@ -286,7 +269,7 @@ export default function ResearchDashboard() {
           <div className="flex items-center gap-3">
             <span className="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-400 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.04]">
               <Sparkles className="w-3 h-3 text-green-400" />
-              Powered by CanopyWave
+              Powered by Bluesminds
             </span>
             <a
               href="https://github.com/kentanghub/carebrum"
@@ -621,14 +604,7 @@ export default function ResearchDashboard() {
                     className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20"
                   >
                     <Download className="w-3 h-3" />
-                    MD
-                  </button>
-                  <button
-                    onClick={downloadPDF}
-                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20"
-                  >
-                    <FileText className="w-3 h-3" />
-                    PDF
+                    Download MD
                   </button>
                 </div>
               )}
