@@ -11,6 +11,7 @@ export interface LLMConfig {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  timeoutMs?: number;
 }
 
 export const MODELS = {
@@ -241,7 +242,7 @@ export async function completion(
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs || 30000);
 
   try {
     const response = await fetch(`${API_BASE_URL}/chat/completions`, {
@@ -272,7 +273,7 @@ export async function completion(
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Request timed out after 30 seconds. The API may be slow or unavailable.');
+      throw new Error(`Request timed out after ${config.timeoutMs || 30000}ms. The API may be slow or unavailable.`);
     }
     throw error;
   }
