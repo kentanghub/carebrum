@@ -2,7 +2,16 @@
 
 import { motion } from 'framer-motion';
 import { AgentState } from '@/types';
-import { Brain, Eye, GitBranch, FileText, CheckCircle, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import {
+  Brain,
+  Eye,
+  GitBranch,
+  FileText,
+  CheckCircle,
+  Loader2,
+  Sparkles,
+  AlertCircle,
+} from 'lucide-react';
 
 const iconMap: Record<string, React.ReactNode> = {
   Brain: <Brain className="w-5 h-5" />,
@@ -13,58 +22,148 @@ const iconMap: Record<string, React.ReactNode> = {
 };
 
 const statusConfig = {
-  idle: { color: 'bg-gray-100 text-gray-500', icon: null },
-  running: { color: 'bg-blue-50 text-blue-600 border-blue-200', icon: <Loader2 className="w-4 h-4 animate-spin" /> },
-  completed: { color: 'bg-green-50 text-green-600 border-green-200', icon: <CheckCircle2 className="w-4 h-4" /> },
-  error: { color: 'bg-red-50 text-red-600 border-red-200', icon: <AlertCircle className="w-4 h-4" /> },
+  idle: {
+    border: 'border-white/[0.04]',
+    bg: 'bg-white/[0.02]',
+    text: 'text-gray-500',
+    icon: null,
+    glow: '',
+  },
+  running: {
+    border: 'border-indigo-500/30',
+    bg: 'bg-indigo-500/[0.08]',
+    text: 'text-indigo-300',
+    icon: <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />,
+    glow: 'shadow-[0_0_20px_rgba(99,102,241,0.15)]',
+  },
+  completed: {
+    border: 'border-emerald-500/30',
+    bg: 'bg-emerald-500/[0.08]',
+    text: 'text-emerald-300',
+    icon: <Sparkles className="w-4 h-4 text-emerald-400" />,
+    glow: 'shadow-[0_0_20px_rgba(16,185,129,0.1)]',
+  },
+  error: {
+    border: 'border-rose-500/30',
+    bg: 'bg-rose-500/[0.08]',
+    text: 'text-rose-300',
+    icon: <AlertCircle className="w-4 h-4 text-rose-400" />,
+    glow: 'shadow-[0_0_20px_rgba(239,68,68,0.1)]',
+  },
+};
+
+const agentColors: Record<string, string> = {
+  orchestrator: 'from-indigo-500 to-violet-500',
+  multimodal_extractor: 'from-cyan-500 to-blue-500',
+  reasoning_engine: 'from-amber-500 to-orange-500',
+  synthesizer: 'from-emerald-500 to-teal-500',
+  critic: 'from-pink-500 to-rose-500',
+};
+
+const agentGlowColors: Record<string, string> = {
+  orchestrator: 'shadow-indigo-500/20',
+  multimodal_extractor: 'shadow-cyan-500/20',
+  reasoning_engine: 'shadow-amber-500/20',
+  synthesizer: 'shadow-emerald-500/20',
+  critic: 'shadow-pink-500/20',
 };
 
 interface AgentNodeProps {
   agent: AgentState;
   isActive: boolean;
+  index: number;
 }
 
-export function AgentNode({ agent, isActive }: AgentNodeProps) {
+export default function AgentNode({ agent, isActive, index }: AgentNodeProps) {
   const status = statusConfig[agent.status];
+  const colorClass = agentColors[agent.id] || 'from-indigo-500 to-violet-500';
+  const glowColor = agentGlowColors[agent.id] || 'shadow-indigo-500/20';
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`relative p-4 rounded-xl border-2 transition-all duration-300 ${
-        isActive ? 'border-blue-500 shadow-lg shadow-blue-100' : 'border-gray-200'
-      } ${status.color}`}
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay: index * 0.1, duration: 0.4, ease: 'easeOut' }}
+      className={`relative rounded-xl border ${status.border} ${status.bg} ${status.glow} ${
+        isActive ? `ring-1 ring-indigo-500/30 ${glowColor} shadow-[0_0_30px_rgba(99,102,241,0.15)]` : ''
+      } overflow-hidden transition-all duration-500`}
     >
-      <div className="flex items-start gap-3">
-        <div className={`p-2 rounded-lg ${isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'}`}>
-          {iconMap[agent.icon] || <Brain className="w-5 h-5" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="font-semibold text-sm">{agent.name}</h3>
-            {status.icon}
-          </div>
-          <p className="text-xs mt-1 opacity-80">{agent.description}</p>
-          {agent.model && (
-            <span className="inline-block mt-2 text-xs px-2 py-0.5 rounded-full bg-white/60 font-mono">
-              {agent.model}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {isActive && agent.status === 'running' && (
+      {/* Active shimmer effect */}
+      {isActive && (
         <motion.div
-          className="absolute inset-0 rounded-xl border-2 border-blue-400"
-          animate={{ opacity: [0.5, 1, 0.5] }}
-          transition={{ duration: 2, repeat: Infinity }}
+          className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent"
+          animate={{ x: ['-100%', '100%'] }}
+          transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
         />
       )}
 
-      {agent.startTime && agent.endTime && (
-        <div className="mt-2 text-xs opacity-60">
-          Duration: {((agent.endTime - agent.startTime) / 1000).toFixed(1)}s
+      <div className="relative p-4">
+        <div className="flex items-center gap-3">
+          {/* Icon with gradient */}
+          <div
+            className={`relative flex-shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br ${colorClass} flex items-center justify-center text-white shadow-lg`}
+          >
+            {iconMap[agent.icon] || <Brain className="w-5 h-5" />}
+            {isActive && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-[#030308] animate-pulse" />
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className={`font-semibold text-sm ${status.text}`}>
+                {agent.name}
+              </h3>
+              <div className="flex items-center gap-1.5">
+                {status.icon}
+                <span
+                  className={`text-[10px] uppercase tracking-wider font-medium ${status.text} opacity-70`}
+                >
+                  {agent.status}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+              {agent.description}
+            </p>
+          </div>
         </div>
+
+        {/* Model badge */}
+        {agent.model && (
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.04] text-gray-500 border border-white/[0.04] font-mono">
+              {agent.model}
+            </span>
+            {agent.startTime && agent.endTime && (
+              <span className="text-[10px] text-gray-600 font-mono">
+                {(agent.endTime - agent.startTime) / 1000}s
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Output preview */}
+        {agent.output && agent.status === 'completed' && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mt-3 pt-3 border-t border-white/[0.04]"
+          >
+            <p className="text-xs text-gray-400 line-clamp-3 leading-relaxed">
+              {agent.output.substring(0, 200)}
+              {agent.output.length > 200 ? '...' : ''}
+            </p>
+          </motion.div>
+        )}
+      </div>
+
+      {/* Bottom gradient line */}
+      {isActive && (
+        <motion.div
+          className={`h-0.5 bg-gradient-to-r ${colorClass}`}
+          layoutId={`agent-line-${agent.id}`}
+        />
       )}
     </motion.div>
   );

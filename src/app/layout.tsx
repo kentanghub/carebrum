@@ -13,8 +13,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cerebrum - Multi-Agent Research System powered by MiMo",
-  description: "A sophisticated multi-agent research system leveraging Xiaomi MiMo's advanced AI models for comprehensive analysis and synthesis.",
+  title: "Cerebrum — Multi-Agent Research System",
+  description:
+    "A sophisticated multi-agent research system powered by advanced AI models. Orchestrates collaborative AI agents to perform autonomous deep-dive research and produce publication-quality reports.",
+  keywords: [
+    "AI research",
+    "multi-agent",
+    "MiMo",
+    "Xiaomi",
+    "research automation",
+    "chain-of-thought",
+  ],
+  authors: [{ name: "Cerebrum" }],
+  openGraph: {
+    title: "Cerebrum — Multi-Agent Research System",
+    description:
+      "Orchestrate collaborative AI agents for autonomous deep-dive research",
+    type: "website",
+  },
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
@@ -25,9 +45,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-screen bg-[#030308] text-gray-200">
+        {children}
+      </body>
     </html>
   );
 }

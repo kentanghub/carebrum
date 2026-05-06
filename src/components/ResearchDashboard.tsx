@@ -5,13 +5,55 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentState, StreamEvent, ResearchRequest } from '@/types';
-import { AgentNode } from './AgentNode';
-import { Send, Sparkles, Zap, BookOpen, FileText, Loader2, Download, Brain, Eye } from 'lucide-react';
+import AgentNode from './AgentNode';
+import Logo from './Logo';
+import NeuralBackground from './NeuralBackground';
+import {
+  Sparkles,
+  Zap,
+  BookOpen,
+  Telescope,
+  Loader2,
+  Download,
+  Terminal,
+  Play,
+  Square,
+  ExternalLink,
+  CheckCircle2,
+  BrainCircuit,
+  Code2,
+  FileText,
+} from 'lucide-react';
 
 const DEPTH_OPTIONS = [
-  { value: 'quick', label: 'Quick Scan', desc: 'Fast overview (~30s)', icon: <Zap className="w-4 h-4" /> },
-  { value: 'standard', label: 'Standard', desc: 'Balanced depth (~2min)', icon: <BookOpen className="w-4 h-4" /> },
-  { value: 'deep', label: 'Deep Research', desc: 'Thorough analysis (~5min)', icon: <Sparkles className="w-4 h-4" /> },
+  {
+    value: 'quick',
+    label: 'Quick Scan',
+    desc: 'Overview in ~30s',
+    icon: <Zap className="w-4 h-4" />,
+    color: 'from-blue-500 to-cyan-500',
+  },
+  {
+    value: 'standard',
+    label: 'Standard',
+    desc: 'Balanced depth ~2min',
+    icon: <BookOpen className="w-4 h-4" />,
+    color: 'from-violet-500 to-purple-500',
+  },
+  {
+    value: 'deep',
+    label: 'Deep Research',
+    desc: 'Thorough analysis ~5min',
+    icon: <Telescope className="w-4 h-4" />,
+    color: 'from-pink-500 to-rose-500',
+  },
+];
+
+const SAMPLE_QUERIES = [
+  'Impact of generative AI on software development in 2025',
+  'Sustainable energy adoption barriers in Southeast Asia',
+  'The future of decentralized finance and regulatory challenges',
+  'Quantum computing applications in pharmaceutical drug discovery',
 ];
 
 export default function ResearchDashboard() {
@@ -23,10 +65,11 @@ export default function ResearchDashboard() {
   const [report, setReport] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [showReport, setShowReport] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const addLog = useCallback((message: string) => {
-    setLogs(prev => [...prev.slice(-50), `[${new Date().toLocaleTimeString()}] ${message}`]);
+    setLogs((prev) => [...prev.slice(-40), message]);
   }, []);
 
   const runResearch = async () => {
@@ -37,13 +80,14 @@ export default function ResearchDashboard() {
     setLogs([]);
     setAgents([]);
     setActiveAgent(null);
+    setShowReport(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       const request: ResearchRequest = { query, depth, multimodal };
-      
+
       const response = await fetch('/api/research', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -74,7 +118,7 @@ export default function ResearchDashboard() {
               const event: StreamEvent = JSON.parse(line.slice(6));
               handleEvent(event);
             } catch {
-              // Skip malformed events
+              // skip
             }
           }
         }
@@ -92,33 +136,40 @@ export default function ResearchDashboard() {
   const handleEvent = (event: StreamEvent) => {
     switch (event.type) {
       case 'agent_start':
-        setAgents(prev => prev.map(a => 
-          a.id === event.agentId ? { ...a, status: 'running' } : a
-        ));
+        setAgents((prev) =>
+          prev.map((a) =>
+            a.id === event.agentId ? { ...a, status: 'running' } : a
+          )
+        );
         setActiveAgent(event.agentId || null);
-        if (event.message) addLog(`${event.agentId}: ${event.message}`);
+        if (event.message) addLog(`→ ${event.agentId}: ${event.message}`);
         break;
 
       case 'agent_update':
         if (event.message) {
-          addLog(`${event.agentId}: ${event.message.substring(0, 100)}...`);
+          addLog(`  ${event.message.substring(0, 80)}...`);
         }
         break;
 
       case 'agent_complete':
-        setAgents(prev => prev.map(a => 
-          a.id === event.agentId ? { ...a, status: 'completed', output: event.data } : a
-        ));
-        if (event.message) addLog(`${event.agentId}: Completed`);
+        setAgents((prev) =>
+          prev.map((a) =>
+            a.id === event.agentId
+              ? { ...a, status: 'completed', output: event.data }
+              : a
+          )
+        );
+        if (event.message) addLog(`✓ ${event.agentId}: completed`);
         break;
 
       case 'report':
         setReport(event.data || '');
-        addLog('Report generated successfully');
+        setShowReport(true);
+        addLog('✓ Report generated');
         break;
 
       case 'error':
-        addLog(`Error: ${event.message}`);
+        addLog(`✗ Error: ${event.message}`);
         break;
     }
   };
@@ -133,211 +184,443 @@ export default function ResearchDashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `research-report-${Date.now()}.md`;
+    a.download = `cerebrum-report-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
+  const completedCount = agents.filter((a) => a.status === 'completed').length;
+  const totalCount = 5;
+  const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="relative min-h-screen bg-[#030308] text-gray-200 overflow-x-hidden">
+      <NeuralBackground />
+
       {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <header className="relative z-10 border-b border-white/[0.04] backdrop-blur-xl bg-[#030308]/60">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
+            <Logo size={36} animated />
             <div>
-              <h1 className="font-bold text-lg bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              <h1 className="font-bold text-lg gradient-text tracking-tight">
                 Cerebrum
               </h1>
-              <p className="text-xs text-gray-500">Multi-Agent Research System</p>
+              <p className="text-[10px] text-gray-500 -mt-0.5 tracking-wide uppercase">
+                Multi-Agent Research System
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className="px-2 py-1 bg-blue-50 rounded-full">Powered by MiMo</span>
+
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-500 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.04]">
+              <Sparkles className="w-3 h-3 text-indigo-400" />
+              Powered by MiMo
+            </span>
+            <a
+              href="https://github.com/kentanghub/carebrum"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 rounded-lg hover:bg-white/[0.04] text-gray-400 hover:text-white transition-colors"
+            >
+              <Code2 className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Panel - Input */}
-          <div className="lg:col-span-1 space-y-4">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-              <h2 className="font-semibold text-gray-900 mb-4">Research Query</h2>
-              
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter your research topic... e.g., 'Impact of AI on climate change mitigation strategies'"
-                className="w-full h-32 p-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none text-sm"
-                disabled={isRunning}
-              />
+      {/* Main Content */}
+      <main className="relative z-10 max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
+        {/* Hero / Input Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <div className="glass-strong rounded-2xl p-6 sm:p-8">
+            {/* Input Area */}
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                Research Query
+              </label>
+              <div className="relative">
+                <textarea
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="What would you like to research? Try: 'Impact of generative AI on software development jobs in 2025'"
+                  className="w-full h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none"
+                  disabled={isRunning}
+                />
+                <div className="absolute bottom-3 right-3 text-[10px] text-gray-600 font-mono">
+                  {query.length} chars
+                </div>
+              </div>
+            </div>
 
-              <div className="mt-4">
-                <label className="text-xs font-medium text-gray-700 mb-2 block">Research Depth</label>
-                <div className="space-y-2">
-                  {DEPTH_OPTIONS.map((option) => (
+            {/* Quick suggestions */}
+            {!query && !isRunning && (
+              <div className="mb-5">
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+                  Try asking
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {SAMPLE_QUERIES.map((q) => (
                     <button
-                      key={option.value}
-                      onClick={() => setDepth(option.value as any)}
-                      className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
-                        depth === option.value
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-100 hover:border-gray-200'
-                      }`}
-                      disabled={isRunning}
+                      key={q}
+                      onClick={() => setQuery(q)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-gray-400 hover:text-gray-200 hover:border-white/[0.08] hover:bg-white/[0.05] transition-all"
                     >
-                      <div className={depth === option.value ? 'text-blue-600' : 'text-gray-400'}>
-                        {option.icon}
-                      </div>
-                      <div className="text-left">
-                        <div className="text-sm font-medium">{option.label}</div>
-                        <div className="text-xs text-gray-500">{option.desc}</div>
-                      </div>
+                      {q.length > 50 ? q.slice(0, 50) + '...' : q}
                     </button>
                   ))}
                 </div>
               </div>
+            )}
 
-              <div className="mt-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={multimodal}
-                    onChange={(e) => setMultimodal(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-600"
+            {/* Depth Selector */}
+            <div className="mb-5">
+              <label className="block text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+                Research Depth
+              </label>
+              <div className="grid grid-cols-3 gap-3">
+                {DEPTH_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setDepth(option.value as any)}
                     disabled={isRunning}
-                  />
-                  <span className="text-sm text-gray-700">Enable Multimodal Analysis</span>
-                  <span className="text-xs text-gray-400">(Omni model)</span>
-                </label>
+                    className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-300 ${
+                      depth === option.value
+                        ? 'border-indigo-500/30 bg-indigo-500/[0.08] shadow-[0_0_20px_rgba(99,102,241,0.1)]'
+                        : 'border-white/[0.04] bg-white/[0.02] hover:border-white/[0.08] hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div
+                      className={`p-1.5 rounded-md bg-gradient-to-br ${option.color} text-white`}
+                    >
+                      {option.icon}
+                    </div>
+                    <div className="text-center">
+                      <div
+                        className={`text-xs font-medium ${
+                          depth === option.value
+                            ? 'text-indigo-300'
+                            : 'text-gray-300'
+                        }`}
+                      >
+                        {option.label}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        {option.desc}
+                      </div>
+                    </div>
+                    {depth === option.value && (
+                      <motion.div
+                        layoutId="depth-indicator"
+                        className="absolute inset-0 rounded-xl ring-1 ring-indigo-500/20"
+                      />
+                    )}
+                  </button>
+                ))}
               </div>
+            </div>
 
-              <button
+            {/* Multimodal toggle + Action button */}
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <div
+                  className={`relative w-9 h-5 rounded-full transition-colors ${
+                    multimodal ? 'bg-indigo-500' : 'bg-white/[0.06]'
+                  }`}
+                  onClick={() => !isRunning && setMultimodal(!multimodal)}
+                >
+                  <motion.div
+                    className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm"
+                    animate={{ x: multimodal ? 16 : 0 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  />
+                </div>
+                <span className="text-xs text-gray-400">
+                  Multimodal Analysis
+                </span>
+                <span className="text-[10px] text-gray-600">(Omni)</span>
+              </label>
+
+              <motion.button
                 onClick={isRunning ? stopResearch : runResearch}
-                className={`w-full mt-4 py-3 px-4 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all ${
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm transition-all ${
                   isRunning
-                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                    : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-lg hover:shadow-blue-200'
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
+                    : 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30'
                 }`}
               >
                 {isRunning ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Stop Research
+                    <Square className="w-4 h-4" />
+                    Stop
                   </>
                 ) : (
                   <>
-                    <Send className="w-4 h-4" />
+                    <Play className="w-4 h-4" />
                     Start Research
                   </>
                 )}
-              </button>
+              </motion.button>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Progress Bar */}
+        {isRunning && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mb-6"
+          >
+            <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1.5">
+              <span>Research Progress</span>
+              <span>{Math.round(progress)}%</span>
+            </div>
+            <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"
+                animate={{ width: `${progress}%` }}
+                transition={{ duration: 0.5 }}
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {/* Three Column Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left: Agents */}
+          <div className="lg:col-span-4 space-y-4">
+            <div className="flex items-center gap-2 mb-3">
+              <BrainCircuit className="w-4 h-4 text-indigo-400" />
+              <h2 className="text-sm font-semibold text-gray-300">
+                Agent Swarm
+              </h2>
+              {agents.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/[0.04] text-gray-500 font-mono">
+                  {completedCount}/{totalCount}
+                </span>
+              )}
             </div>
 
-            {/* System Logs */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-              <h2 className="font-semibold text-gray-900 mb-3 text-sm">System Logs</h2>
-              <div className="h-48 overflow-y-auto text-xs font-mono space-y-1 bg-gray-50 rounded-xl p-3">
+            <div className="space-y-3">
+              <AnimatePresence mode="popLayout">
+                {agents.length === 0 ? (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="glass rounded-xl p-8 text-center"
+                  >
+                    <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-white/[0.03] flex items-center justify-center">
+                      <Sparkles className="w-5 h-5 text-gray-600" />
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      Agents will appear here
+                    </p>
+                    <p className="text-[10px] text-gray-600 mt-1">
+                      Start a research query above
+                    </p>
+                  </motion.div>
+                ) : (
+                  agents.map((agent, i) => (
+                    <AgentNode
+                      key={agent.id}
+                      agent={agent}
+                      isActive={activeAgent === agent.id}
+                      index={i}
+                    />
+                  ))
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Logs */}
+            <div className="mt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Terminal className="w-3.5 h-3.5 text-gray-500" />
+                <h3 className="text-[10px] text-gray-500 uppercase tracking-wider">
+                  System Logs
+                </h3>
+              </div>
+              <div className="glass rounded-xl p-3 h-40 overflow-y-auto font-mono text-[10px] leading-relaxed space-y-0.5">
                 {logs.length === 0 ? (
-                  <span className="text-gray-400">Waiting to start...</span>
+                  <span className="text-gray-600">Waiting...</span>
                 ) : (
                   logs.map((log, i) => (
-                    <div key={i} className="text-gray-600 break-all">{log}</div>
+                    <div key={i} className="text-gray-400 break-all">
+                      <span className="text-gray-600">{log}</span>
+                    </div>
                   ))
                 )}
               </div>
             </div>
           </div>
 
-          {/* Middle Panel - Agent Flow */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-              <h2 className="font-semibold text-gray-900 mb-4">Agent Collaboration</h2>
-              <div className="space-y-3">
-                <AnimatePresence>
-                  {agents.length === 0 ? (
-                    <div className="text-center py-12 text-gray-400">
-                      <Sparkles className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                      <p className="text-sm">Agents will appear here when research starts</p>
+          {/* Center: Visualization */}
+          <div className="lg:col-span-3">
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <h2 className="text-sm font-semibold text-gray-300">
+                Pipeline
+              </h2>
+            </div>
+            <div className="glass rounded-xl p-4 min-h-[400px] flex flex-col items-center justify-center">
+              {agents.length === 0 ? (
+                <div className="text-center">
+                  <div className="relative w-20 h-20 mx-auto mb-4">
+                    <div className="absolute inset-0 rounded-full bg-indigo-500/10 animate-pulse" />
+                    <div className="absolute inset-2 rounded-full bg-indigo-500/5" />
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      <BrainCircuit className="w-8 h-8 text-indigo-400/50" />
                     </div>
-                  ) : (
-                    agents.map((agent) => (
-                      <AgentNode
-                        key={agent.id}
-                        agent={agent}
-                        isActive={activeAgent === agent.id}
-                      />
-                    ))
-                  )}
-                </AnimatePresence>
-              </div>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Research pipeline visualization
+                  </p>
+                  <p className="text-[10px] text-gray-600 mt-1">
+                    Will show agent connections
+                  </p>
+                </div>
+              ) : (
+                <div className="w-full space-y-0">
+                  {agents.map((agent, i) => (
+                    <div key={agent.id} className="flex flex-col items-center">
+                      <motion.div
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ delay: i * 0.15 }}
+                        className={`relative w-12 h-12 rounded-full flex items-center justify-center ${
+                          agent.status === 'running'
+                            ? 'bg-indigo-500/20 ring-2 ring-indigo-500/40'
+                            : agent.status === 'completed'
+                            ? 'bg-emerald-500/20 ring-2 ring-emerald-500/40'
+                            : 'bg-white/[0.03] ring-1 ring-white/[0.06]'
+                        }`}
+                      >
+                        {agent.status === 'running' && (
+                          <span className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping" />
+                        )}
+                        <span
+                          className={`relative text-xs font-bold ${
+                            agent.status === 'running'
+                              ? 'text-indigo-300'
+                              : agent.status === 'completed'
+                              ? 'text-emerald-300'
+                              : 'text-gray-600'
+                          }`}
+                        >
+                          {i + 1}
+                        </span>
+                      </motion.div>
+                      <p className="text-[10px] text-gray-500 mt-1.5 text-center">
+                        {agent.name.split(' ')[0]}
+                      </p>
+                      {i < agents.length - 1 && (
+                        <motion.div
+                          initial={{ height: 0 }}
+                          animate={{ height: 32 }}
+                          transition={{ delay: i * 0.15 + 0.2 }}
+                          className="w-px bg-gradient-to-b from-white/[0.08] to-white/[0.02] my-1"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Right Panel - Output */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-semibold text-gray-900">Research Report</h2>
-                {report && (
-                  <button
-                    onClick={downloadReport}
-                    className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700"
-                  >
-                    <Download className="w-3 h-3" />
-                    Download
-                  </button>
-                )}
+          {/* Right: Report */}
+          <div className="lg:col-span-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-violet-400" />
+                <h2 className="text-sm font-semibold text-gray-300">
+                  Research Report
+                </h2>
               </div>
-              
-              <div className="prose prose-sm max-w-none">
-                {report ? (
+              {report && (
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  onClick={downloadReport}
+                  className="flex items-center gap-1.5 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors px-2 py-1 rounded-lg hover:bg-indigo-500/10"
+                >
+                  <Download className="w-3 h-3" />
+                  Download .md
+                </motion.button>
+              )}
+            </div>
+
+            <div className="glass rounded-xl min-h-[500px] overflow-hidden">
+              {report ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="p-6 prose-invert text-sm overflow-y-auto max-h-[700px]"
+                >
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {report}
                   </ReactMarkdown>
-                ) : (
-                  <div className="text-center py-12 text-gray-400">
-                    <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm">Your research report will appear here</p>
+                </motion.div>
+              ) : (
+                <div className="flex flex-col items-center justify-center min-h-[500px] text-center p-8">
+                  <div className="relative w-16 h-16 mb-4">
+                    <div className="absolute inset-0 rounded-full border border-white/[0.04]" />
+                    <div className="absolute inset-0 rounded-full border border-t-indigo-500/20 animate-spin" />
+                    <div className="absolute inset-3 rounded-full bg-white/[0.02] flex items-center justify-center">
+                      <FileText className="w-5 h-5 text-gray-600" />
+                    </div>
                   </div>
-                )}
-              </div>
+                  <p className="text-xs text-gray-500">
+                    Your research report will appear here
+                  </p>
+                  <p className="text-[10px] text-gray-600 mt-1 max-w-[200px]">
+                    Start a research query and watch the agents collaborate in
+                    real-time
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Features Section */}
-        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <FeatureCard
-            icon={<Brain className="w-6 h-6 text-blue-600" />}
-            title="Chain-of-Thought Reasoning"
-            description="Deep reasoning with MiMo-V2-Pro for complex problem analysis"
-          />
-          <FeatureCard
-            icon={<Eye className="w-6 h-6 text-purple-600" />}
-            title="Multimodal Understanding"
-            description="Process text, images, audio, and video with MiMo-V2-Omni"
-          />
-          <FeatureCard
-            icon={<Sparkles className="w-6 h-6 text-green-600" />}
-            title="Multi-Agent Collaboration"
-            description="Specialized agents work together for comprehensive research"
-          />
-        </div>
+        {/* Footer */}
+        <footer className="mt-12 pt-8 border-t border-white/[0.04] text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Logo size={24} />
+            <span className="text-sm font-semibold gradient-text">Cerebrum</span>
+          </div>
+          <p className="text-[10px] text-gray-600">
+            Multi-Agent Research System • Built for Xiaomi MiMo Orbit 100T
+          </p>
+          <div className="flex items-center justify-center gap-4 mt-3">
+            <a
+              href="https://github.com/kentanghub/carebrum"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <Code2 className="w-3 h-3" />
+              GitHub
+            </a>
+            <a
+              href="https://platform.xiaomimimo.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <ExternalLink className="w-3 h-3" />
+              MiMo Platform
+            </a>
+          </div>
+        </footer>
       </main>
-    </div>
-  );
-}
-
-function FeatureCard({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-      <div className="p-3 bg-gray-50 rounded-xl w-fit mb-4">{icon}</div>
-      <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
-      <p className="text-sm text-gray-500">{description}</p>
     </div>
   );
 }
