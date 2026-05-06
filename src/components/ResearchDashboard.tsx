@@ -71,19 +71,35 @@ const DEFAULT_AGENTS: AgentState[] = [
     messages: [],
   },
   {
-    id: 'researcher',
-    name: 'Research Analyst',
+    id: 'multimodal_extractor',
+    name: 'Multimodal Extractor',
     status: 'idle',
-    description: 'Gathers and analyzes information from multiple angles',
+    description: 'Extracts and enriches information from multiple sources',
     icon: 'Eye',
     messages: [],
   },
   {
+    id: 'reasoning_engine',
+    name: 'Reasoning Engine',
+    status: 'idle',
+    description: 'Performs deep chain-of-thought reasoning and verification',
+    icon: 'GitBranch',
+    messages: [],
+  },
+  {
     id: 'synthesizer',
-    name: 'Report Writer',
+    name: 'Report Synthesizer',
     status: 'idle',
     description: 'Synthesizes findings into comprehensive report',
     icon: 'FileText',
+    messages: [],
+  },
+  {
+    id: 'critic',
+    name: 'Quality Critic',
+    status: 'idle',
+    description: 'Reviews and refines final output for accuracy',
+    icon: 'CheckCircle',
     messages: [],
   },
 ];
@@ -244,7 +260,7 @@ export default function ResearchDashboard() {
   };
 
   const completedCount = agents.filter((a) => a.status === 'completed').length;
-  const totalCount = 3;
+  const totalCount = 5;
   const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
@@ -401,11 +417,12 @@ export default function ResearchDashboard() {
 
               <motion.button
                 onClick={isRunning ? stopResearch : runResearch}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+                disabled={isRunning}
+                whileHover={!isRunning ? { scale: 1.02 } : {}}
+                whileTap={!isRunning ? { scale: 0.98 } : {}}
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm transition-all ${
                   isRunning
-                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 cursor-not-allowed opacity-70'
                     : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/20 hover:shadow-green-500/30'
                 }`}
               >
