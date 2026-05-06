@@ -5,32 +5,20 @@ const AGENT_DEFINITIONS = {
   ORCHESTRATOR: {
     id: 'orchestrator',
     name: 'Orchestrator Agent',
-    description: 'Coordinates the entire research workflow and delegates tasks',
+    description: 'Analyzes query and plans research strategy',
     icon: 'Brain',
   },
-  MULTIMODAL_EXTRACTOR: {
-    id: 'multimodal_extractor',
-    name: 'Multimodal Extractor',
-    description: 'Extracts information from text, images, audio, and video sources',
+  RESEARCHER: {
+    id: 'researcher',
+    name: 'Research Analyst',
+    description: 'Gathers and analyzes information from multiple angles',
     icon: 'Eye',
-  },
-  REASONING_ENGINE: {
-    id: 'reasoning_engine',
-    name: 'Reasoning Engine',
-    description: 'Performs deep chain-of-thought reasoning and fact verification',
-    icon: 'GitBranch',
   },
   SYNTHESIZER: {
     id: 'synthesizer',
-    name: 'Report Synthesizer',
-    description: 'Synthesizes findings into comprehensive, structured reports',
+    name: 'Report Writer',
+    description: 'Synthesizes findings into comprehensive report',
     icon: 'FileText',
-  },
-  CRITIC: {
-    id: 'critic',
-    name: 'Quality Critic',
-    description: 'Reviews and critiques the final output for accuracy and completeness',
-    icon: 'CheckCircle',
   },
 };
 
@@ -46,161 +34,154 @@ export function initializeAgents(): AgentState[] {
   return Object.values(AGENT_DEFINITIONS).map(createAgentState);
 }
 
+// Timeout wrapper for promises
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  );
+  return Promise.race([promise, timeout]);
+}
+
 export async function* runResearchPipeline(
   request: ResearchRequest,
   agents: AgentState[]
 ): AsyncGenerator<StreamEvent> {
+  const startTime = Date.now();
+  const TIMEOUT_MS = 45000; // 45 second total timeout
+
   try {
-    // Step 1: Orchestrator analyzes the query and plans the research
+    // Step 1: Orchestrator - Quick plan (max 2048 tokens, fast)
     const orchestrator = agents.find(a => a.id === 'orchestrator')!;
     orchestrator.status = 'running';
     orchestrator.startTime = Date.now();
-    yield { type: 'agent_start', agentId: orchestrator.id, message: 'Analyzing research query...' };
+    yield { type: 'agent_start', agentId: orchestrator.id, message: 'Analyzing query and creating research plan...' };
 
     const planPrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `You are an expert research orchestrator. Analyze the user's query and create a detailed research plan.
-        Identify key aspects to investigate, potential sources, and the depth of analysis needed.
-        Respond with a structured plan in markdown format.`,
+        content: `You are a research planner. Analyze the query and create a brief research plan (max 500 words).
+Identify: 1) Key questions to answer, 2) Important aspects to cover, 3) Potential sources.
+Be concise and focused.`,
       },
       {
         role: 'user',
-        content: `Query: ${request.query}\nDepth: ${request.depth || 'standard'}\nMultimodal: ${request.multimodal ? 'yes' : 'no'}`,
+        content: `Query: ${request.query}\nDepth: ${request.depth || 'standard'}`,
       },
     ];
 
     orchestrator.messages = planPrompt;
-    const plan = await completion(planPrompt, { model: ACTIVE_MODEL, temperature: 0.3 });
+    const plan = await withTimeout(
+      completion(planPrompt, { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 2048 }),
+      15000,
+      'Planning phase'
+    );
     orchestrator.output = plan;
     orchestrator.status = 'completed';
     orchestrator.endTime = Date.now();
     yield { type: 'agent_complete', agentId: orchestrator.id, data: plan };
 
-    // Step 2: Multimodal Extraction (simulated with text analysis)
-    const extractor = agents.find(a => a.id === 'multimodal_extractor')!;
-    extractor.status = 'running';
-    extractor.startTime = Date.now();
-    yield { type: 'agent_start', agentId: extractor.id, message: 'Extracting and analyzing information...' };
-
-    const extractPrompt: AgentMessage[] = [
-      {
-        role: 'system',
-        content: `You are a multimodal information extractor. Given a research query and plan, extract all relevant facts, data points, and insights.
-        If multimodal sources are mentioned, describe what information would be extracted from images, audio, or video.
-        Be thorough and extract as much relevant detail as possible.`,
-      },
-      {
-        role: 'user',
-        content: `Query: ${request.query}\n\nResearch Plan:\n${plan}\n\nPlease extract all relevant information and present it in a structured format.`,
-      },
-    ];
-
-    extractor.messages = extractPrompt;
-    const extractedInfo = await completion(extractPrompt, { model: ACTIVE_MODEL, temperature: 0.2, max_tokens: 8192 });
-    extractor.output = extractedInfo;
-    extractor.status = 'completed';
-    extractor.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: extractor.id, data: extractedInfo };
-
-    // Step 3: Reasoning Engine performs deep analysis
-    const reasoner = agents.find(a => a.id === 'reasoning_engine')!;
-    reasoner.status = 'running';
-    reasoner.startTime = Date.now();
-    yield { type: 'agent_start', agentId: reasoner.id, message: 'Performing deep chain-of-thought reasoning...' };
-
-    const reasoningPrompt: AgentMessage[] = [
-      {
-        role: 'system',
-        content: `You are an expert reasoning engine. Perform deep chain-of-thought analysis on the extracted information.
-        Identify patterns, causal relationships, potential biases, and gaps in information.
-        Use step-by-step reasoning and verify facts through multiple angles.
-        Highlight any uncertainties or areas needing further investigation.`,
-      },
-      {
-        role: 'user',
-        content: `Query: ${request.query}\n\nExtracted Information:\n${extractedInfo}\n\nPerform deep reasoning and analysis.`,
-      },
-    ];
-
-    reasoner.messages = reasoningPrompt;
-    
-    // Stream the reasoning process
-    let reasoningOutput = '';
-    for await (const chunk of streamCompletion(reasoningPrompt, { model: ACTIVE_MODEL, temperature: 0.4 })) {
-      reasoningOutput += chunk;
-      yield { type: 'agent_update', agentId: reasoner.id, message: chunk };
+    // Check total time
+    if (Date.now() - startTime > TIMEOUT_MS) {
+      throw new Error('Research timed out. Try "Quick Scan" mode or a simpler query.');
     }
-    
-    reasoner.output = reasoningOutput;
-    reasoner.status = 'completed';
-    reasoner.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: reasoner.id, data: reasoningOutput };
 
-    // Step 4: Synthesizer creates the final report
+    // Step 2: Researcher - Gather and analyze (stream for real-time feedback)
+    const researcher = agents.find(a => a.id === 'researcher')!;
+    researcher.status = 'running';
+    researcher.startTime = Date.now();
+    yield { type: 'agent_start', agentId: researcher.id, message: 'Gathering and analyzing information...' };
+
+    const researchPrompt: AgentMessage[] = [
+      {
+        role: 'system',
+        content: `You are an expert research analyst. Based on the research plan, provide a thorough analysis.
+Cover: key facts, trends, stakeholders, challenges, and opportunities.
+Use markdown formatting. Be comprehensive but focused (max 2000 words).`,
+      },
+      {
+        role: 'user',
+        content: `Query: ${request.query}\n\nResearch Plan:\n${plan}\n\nProvide your analysis.`,
+      },
+    ];
+
+    researcher.messages = researchPrompt;
+    
+    let researchOutput = '';
+    const researchStream = streamCompletion(researchPrompt, { 
+      model: ACTIVE_MODEL, 
+      temperature: 0.4,
+      max_tokens: 4096 
+    });
+    
+    const researchTimeout = setTimeout(() => {
+      researchStream.return?.();
+    }, 20000);
+
+    for await (const chunk of researchStream) {
+      researchOutput += chunk;
+      yield { type: 'agent_update', agentId: researcher.id, message: chunk };
+    }
+    clearTimeout(researchTimeout);
+    
+    researcher.output = researchOutput;
+    researcher.status = 'completed';
+    researcher.endTime = Date.now();
+    yield { type: 'agent_complete', agentId: researcher.id, data: researchOutput };
+
+    // Check total time again
+    if (Date.now() - startTime > TIMEOUT_MS) {
+      throw new Error('Research timed out during analysis phase.');
+    }
+
+    // Step 3: Synthesizer - Create final report (stream directly to user)
     const synthesizer = agents.find(a => a.id === 'synthesizer')!;
     synthesizer.status = 'running';
     synthesizer.startTime = Date.now();
-    yield { type: 'agent_start', agentId: synthesizer.id, message: 'Synthesizing comprehensive report...' };
+    yield { type: 'agent_start', agentId: synthesizer.id, message: 'Writing final report...' };
 
     const synthesizePrompt: AgentMessage[] = [
       {
         role: 'system',
-        content: `You are an expert report writer. Synthesize the reasoning and extracted information into a comprehensive, well-structured research report.
-        Use markdown formatting with clear sections, bullet points, and highlights.
-        Include an executive summary, key findings, detailed analysis, and recommendations.
-        Ensure the report is factual, balanced, and actionable.`,
+        content: `You are an expert report writer. Create a well-structured research report in markdown.
+Include: Executive Summary, Key Findings, Detailed Analysis, and Recommendations.
+Use clear headings, bullet points, and bold text for emphasis.
+Maximum 3000 words.`,
       },
       {
         role: 'user',
-        content: `Query: ${request.query}\n\nExtracted Information:\n${extractedInfo}\n\nReasoning and Analysis:\n${reasoningOutput}\n\nCreate a comprehensive research report.`,
+        content: `Query: ${request.query}\n\nAnalysis:\n${researchOutput}\n\nWrite the final research report.`,
       },
     ];
 
     synthesizer.messages = synthesizePrompt;
     
-    // Stream the report generation
     let reportOutput = '';
-    for await (const chunk of streamCompletion(synthesizePrompt, { model: ACTIVE_MODEL, temperature: 0.5 })) {
+    const reportStream = streamCompletion(synthesizePrompt, { 
+      model: ACTIVE_MODEL, 
+      temperature: 0.5,
+      max_tokens: 4096 
+    });
+    
+    const reportTimeout = setTimeout(() => {
+      reportStream.return?.();
+    }, 25000);
+
+    for await (const chunk of reportStream) {
       reportOutput += chunk;
       yield { type: 'agent_update', agentId: synthesizer.id, message: chunk };
     }
+    clearTimeout(reportTimeout);
     
     synthesizer.output = reportOutput;
     synthesizer.status = 'completed';
     synthesizer.endTime = Date.now();
     yield { type: 'agent_complete', agentId: synthesizer.id, data: reportOutput };
 
-    // Step 5: Critic reviews the output
-    const critic = agents.find(a => a.id === 'critic')!;
-    critic.status = 'running';
-    critic.startTime = Date.now();
-    yield { type: 'agent_start', agentId: critic.id, message: 'Reviewing report quality...' };
-
-    const criticPrompt: AgentMessage[] = [
-      {
-        role: 'system',
-        content: `You are a quality assurance critic. Review the research report for accuracy, completeness, clarity, and bias.
-        Provide a brief assessment and confirm the report meets high standards.
-        Keep your response concise (2-3 sentences).`,
-      },
-      {
-        role: 'user',
-        content: `Query: ${request.query}\n\nReport:\n${reportOutput}\n\nProvide a quality assessment.`,
-      },
-    ];
-
-    critic.messages = criticPrompt;
-    const criticOutput = await completion(criticPrompt, { model: ACTIVE_MODEL, temperature: 0.3 });
-    critic.output = criticOutput;
-    critic.status = 'completed';
-    critic.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: critic.id, data: criticOutput };
-
-    // Final report output
+    // Final report
     yield { type: 'report', data: reportOutput };
 
   } catch (error) {
-    yield { type: 'error', message: error instanceof Error ? error.message : 'Unknown error' };
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+    yield { type: 'error', message: errorMsg };
   }
 }

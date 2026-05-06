@@ -66,40 +66,24 @@ const DEFAULT_AGENTS: AgentState[] = [
     id: 'orchestrator',
     name: 'Orchestrator Agent',
     status: 'idle',
-    description: 'Coordinates the entire research workflow and delegates tasks',
+    description: 'Analyzes query and plans research strategy',
     icon: 'Brain',
     messages: [],
   },
   {
-    id: 'multimodal_extractor',
-    name: 'Multimodal Extractor',
+    id: 'researcher',
+    name: 'Research Analyst',
     status: 'idle',
-    description: 'Extracts information from text, images, audio, and video sources',
+    description: 'Gathers and analyzes information from multiple angles',
     icon: 'Eye',
     messages: [],
   },
   {
-    id: 'reasoning_engine',
-    name: 'Reasoning Engine',
-    status: 'idle',
-    description: 'Performs deep chain-of-thought reasoning and fact verification',
-    icon: 'GitBranch',
-    messages: [],
-  },
-  {
     id: 'synthesizer',
-    name: 'Report Synthesizer',
+    name: 'Report Writer',
     status: 'idle',
-    description: 'Synthesizes findings into comprehensive, structured reports',
+    description: 'Synthesizes findings into comprehensive report',
     icon: 'FileText',
-    messages: [],
-  },
-  {
-    id: 'critic',
-    name: 'Quality Critic',
-    status: 'idle',
-    description: 'Reviews and critiques the final output for accuracy and completeness',
-    icon: 'CheckCircle',
     messages: [],
   },
 ];
@@ -277,7 +261,7 @@ export default function ResearchDashboard() {
   };
 
   const completedCount = agents.filter((a) => a.status === 'completed').length;
-  const totalCount = 5;
+  const totalCount = 3;
   const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
@@ -290,7 +274,7 @@ export default function ResearchDashboard() {
           <div className="flex items-center gap-3">
             <Logo size={36} animated />
             <div>
-              <h1 className="font-bold text-lg text-white tracking-tight drop-shadow-sm">
+              <h1 className="font-bold text-lg text-green-400 tracking-tight drop-shadow-sm">
                 Carebrum
               </h1>
               <p className="text-[10px] text-gray-400 -mt-0.5 tracking-wide uppercase">

@@ -163,52 +163,66 @@ export async function* streamCompletion(
     );
   }
 
-  const response = await fetch(`${API_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: config.model || ACTIVE_MODEL,
-      messages,
-      temperature: config.temperature ?? 0.7,
-      max_tokens: config.max_tokens ?? 4096,
-      stream: true,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${errorText}`);
-  }
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: config.model || ACTIVE_MODEL,
+        messages,
+        temperature: config.temperature ?? 0.7,
+        max_tokens: config.max_tokens ?? 4096,
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body');
+    clearTimeout(timeoutId);
 
-  const decoder = new TextDecoder();
-  let buffer = '';
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error ${response.status}: ${errorText}`);
+    }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-    for (const line of lines) {
-      if (line.trim() === '' || line.trim() === 'data: [DONE]') continue;
-      if (line.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          const content = data.choices?.[0]?.delta?.content;
-          if (content) yield content;
-        } catch {
-          // Skip malformed lines
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.trim() === '' || line.trim() === 'data: [DONE]') continue;
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            const content = data.choices?.[0]?.delta?.content;
+            if (content) yield content;
+          } catch {
+            // Skip malformed lines
+          }
         }
       }
     }
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Request timed out after 30 seconds. The API may be slow or unavailable.');
+    }
+    throw error;
   }
 }
 
@@ -226,28 +240,42 @@ export async function completion(
     );
   }
 
-  const response = await fetch(`${API_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: config.model || ACTIVE_MODEL,
-      messages,
-      temperature: config.temperature ?? 0.7,
-      max_tokens: config.max_tokens ?? 4096,
-      stream: false,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${errorText}`);
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: config.model || ACTIVE_MODEL,
+        messages,
+        temperature: config.temperature ?? 0.7,
+        max_tokens: config.max_tokens ?? 4096,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || '';
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Request timed out after 30 seconds. The API may be slow or unavailable.');
+    }
+    throw error;
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || '';
 }
 
 // ===== BACKWARDS COMPATIBILITY =====
