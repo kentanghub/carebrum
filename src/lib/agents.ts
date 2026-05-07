@@ -38,9 +38,36 @@ async function callLLM(msgs: AgentMessage[], depth: string): Promise<string> {
 }
 
 function extractSection(text: string, marker: string, nextMarkers: string[]): string {
-  const pattern = new RegExp(`${marker}([\\s\\S]*?)(?=${nextMarkers.join('|')}|$)`, 'i');
+  const pattern = new RegExp(`${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\s\\S]*?)(?=${nextMarkers.map(m => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}|$)`, 'i');
   const m = text.match(pattern);
   return m ? m[1].trim() : '';
+}
+
+// Generate smarter search queries based on the user's question
+function buildSearchQueries(query: string): string[] {
+  const queries = [query];
+
+  // Add "Indonesia" if the query feels Indonesia-related but doesn't mention it
+  if (!/indonesia/i.test(query)) {
+    queries.push(`${query} Indonesia`);
+  }
+
+  // For acronym-heavy queries, add expansion attempts
+  const acronymMatch = query.match(/\b[A-Z]{2,5}\b/g);
+  if (acronymMatch) {
+    const acronym = acronymMatch[0];
+    // Search with context words that help disambiguate
+    queries.push(`${acronym} adalah program Indonesia`);
+    queries.push(`${query} terbaru 2025`);
+  }
+
+  // For questions, add the topic without question words
+  const noQuestion = query.replace(/^(apakah|apa|bagaimana|mengapa|kenapa|siapa|kapan|dimana)\s+/i, '');
+  if (noQuestion !== query) {
+    queries.push(noQuestion);
+  }
+
+  return [...new Set(queries)].slice(0, 4);
 }
 
 export async function* runResearchPipeline(
@@ -51,96 +78,119 @@ export async function* runResearchPipeline(
   const cfg = DEPTH[depth] || DEPTH.standard;
 
   try {
-    // ── Fire web search (don't wait for it yet) ──
-    const searchPromise = searchWeb(req.query, cfg.searchCount);
+    // ── Step 1: Start web search ──
+    const searchQueries = buildSearchQueries(req.query);
+    console.log(`[Search] queries:`, searchQueries);
 
-    // ── Step 1: Notify orchestrator is analyzing ──
-    const orch = agents.find(a => a.id === 'orchestrator')!;
-    orch.status = 'running'; orch.startTime = Date.now();
-    yield { type: 'agent_start', agentId: orch.id, message: 'Analyzing query & searching web...' };
+    const searchResults: any[] = [];
+    const seenUrls = new Set<string>();
 
-    // ── Wait for web search (with timeout) ──
-    const searchResults = await Promise.race([
-      searchPromise,
-      new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 8000)),
-    ]);
+    for (const sq of searchQueries) {
+      if (searchResults.length >= cfg.searchCount) break;
+      try {
+        const batch = await Promise.race([
+          searchWeb(sq, 4),
+          new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 5000)),
+        ]);
+        for (const r of batch) {
+          if (!seenUrls.has(r.url) && searchResults.length < cfg.searchCount) {
+            seenUrls.add(r.url);
+            searchResults.push(r);
+          }
+        }
+      } catch { /* continue */ }
+    }
+
     const searchText = searchResults.length > 0 ? formatSearchResults(searchResults) : '';
     console.log(`[Search] ${searchResults.length} results in ${Date.now()-t0}ms`);
 
-    // ── Step 2: Single API call with web context ──
+    // ── Step 2: Notify orchestrator ──
+    const orch = agents.find(a => a.id === 'orchestrator')!;
+    orch.status = 'running'; orch.startTime = Date.now();
+    yield { type: 'agent_start', agentId: orch.id, message: 'Researching & analyzing...' };
+
+    // ── Step 3: Single API call ──
     const raw = await callLLM([
       {
         role: 'system',
-        content: `You are an expert research analyst — the best in the world. Your job: answer any question with accurate, specific, well-researched information.
+        content: `You are a world-class research analyst. Your job: answer ANY question with accurate, specific, well-sourced information.
 
-RESPONSE FORMAT (use these exact headers):
+CAPABILITIES:
+- Answer factual questions, yes/no questions, comparative questions, explanatory questions
+- Handle acronyms — use search results + context to determine the correct meaning
+- Analyze current events, programs, policies, trends — especially in Indonesia
+- Provide balanced views with evidence on both sides
 
-## RESEARCH PLAN
-- Restate what the user wants to know
-- Identify what kind of answer they need (factual, yes/no, comparative, explanatory)
-- Key angles to cover
+RESPONSE FORMAT (use exactly these headers):
+
+## TOPIC IDENTIFICATION
+- What is being asked about? If the query contains an acronym (like MBG, IKN, UU, etc.), state what it stands for based on search results and context.
+- Example: "MBG = Makan Bergizi Gratis (program pemerintah Indonesia)" or "MBG = Money Back Guarantee (e-commerce)"
 
 ## FACTS & DATA
-- Specific information: events, dates, names, numbers, statistics
-- Background and context
-- Both supporting and opposing evidence
-- ${searchText ? 'PRIORITIZE information from the web search results' : 'Use your training knowledge'}
+- Specific information: dates, names, numbers, statistics, events
+- Background and historical context
+- Both supporting AND opposing evidence
+- ${searchText ? 'USE the web search results below as your PRIMARY source' : 'Use your training knowledge'}
 
 ## ANALYSIS
 - DIRECTLY answer the question
-- Yes/no questions: state YES or NO clearly, then explain with evidence
-- Explanatory questions: break down causes, mechanisms, effects
-- Comparative questions: contrast with clear criteria
-- Address counterarguments and limitations
-- Be CONCRETE and SPECIFIC — no generic statements
+- Yes/no: state YES or NO clearly, then explain with evidence
+- Explanatory: break down causes, mechanisms, effects
+- Comparative: contrast with clear criteria
+- Address counterarguments
+- Be CONCRETE — use real names, numbers, dates
 
 ## CONCLUSION
 - Bottom line in 2-3 sentences
-- Key takeaway
 
-## QUALITY NOTE
-- Brief self-check: accuracy, completeness, any gaps
+## SOURCES & LIMITATIONS
+- ${searchText ? 'Which search results were most useful?' : 'Note: no web search available'}
+- Any gaps or uncertainties
 
 CRITICAL RULES:
-- NEVER write filler like "research indicates significant developments" or "the ecosystem shows maturity"
-- Use REAL data — names, numbers, dates, places
-- Write naturally — like a knowledgeable expert briefing a colleague
+- NEVER write filler ("research indicates significant developments", "the ecosystem shows maturity")
+- ALWAYS give REAL, SPECIFIC information
+- For acronyms: DETERMINE the correct expansion from context. "MBG" in an Indonesian policy context = "Makan Bergizi Gratis". "MBG" in e-commerce = "Money Back Guarantee". Use search results + your knowledge to disambiguate.
+- Write naturally — like briefing a colleague
 - Answer in the SAME LANGUAGE as the query
-- If search results are provided, USE them as your primary source
-- If the query is about a current event or specific program, use the search results to understand the context correctly
+- If you truly don't know, say so honestly and explain what's unclear
 
-${depth === 'deep' ? 'DEEP MODE: Be especially thorough. Provide nuance, multiple perspectives, and detailed analysis.' : depth === 'quick' ? 'QUICK MODE: Be concise but still specific and data-driven.' : 'STANDARD MODE: Provide balanced depth with clear analysis.'}`,
+${depth === 'deep' ? 'DEEP MODE: Extra thorough. Multiple perspectives, nuance, detailed analysis.' : depth === 'quick' ? 'QUICK MODE: Concise but data-driven. Get to the point fast.' : 'STANDARD MODE: Balanced depth with clear analysis.'}`,
       },
       {
         role: 'user',
         content: `QUERY: ${req.query}
 
-${searchText ? `WEB SEARCH RESULTS (use these as your primary source):\n${chop(searchText, 2500)}` : 'No web search results available. Use your training knowledge.'}
+${searchText ? `WEB SEARCH RESULTS (use as primary source):\n${chop(searchText, 3000)}` : '⚠ No web search results available. Use your training knowledge. If the topic is recent or niche, acknowledge the limitation.'}
 
-Provide a complete, accurate answer.`,
+Provide a complete, accurate, and well-structured answer.`,
       },
     ], depth);
 
-    // ── Step 3: Parse and distribute across agents ──
-    const markers = ['## RESEARCH PLAN', '## FACTS & DATA', '## ANALYSIS', '## CONCLUSION', '## QUALITY NOTE'];
+    // ── Step 4: Parse and distribute ──
+    const markers = ['## TOPIC IDENTIFICATION', '## FACTS & DATA', '## ANALYSIS', '## CONCLUSION', '## SOURCES & LIMITATIONS'];
 
-    const plan     = extractSection(raw, '## RESEARCH PLAN', markers.filter(m => m !== '## RESEARCH PLAN'));
+    const topic    = extractSection(raw, '## TOPIC IDENTIFICATION', markers.filter(m => m !== '## TOPIC IDENTIFICATION'));
     const facts    = extractSection(raw, '## FACTS & DATA', markers.filter(m => m !== '## FACTS & DATA'));
     const analysis = extractSection(raw, '## ANALYSIS', markers.filter(m => m !== '## ANALYSIS'));
     const concl    = extractSection(raw, '## CONCLUSION', markers.filter(m => m !== '## CONCLUSION'));
-    const quality  = extractSection(raw, '## QUALITY NOTE', []);
+    const sources  = extractSection(raw, '## SOURCES & LIMITATIONS', []);
 
-    // Emit each agent
-    orch.output = plan || 'Research plan generated.'; orch.status = 'completed'; orch.endTime = Date.now();
+    // Orchestrator
+    orch.output = topic || 'Research plan generated.';
+    orch.status = 'completed'; orch.endTime = Date.now();
     yield { type: 'agent_complete', agentId: orch.id, data: orch.output };
 
+    // Web Extractor
     const extr = agents.find(a => a.id === 'multimodal_extractor')!;
     extr.status = 'running'; extr.startTime = Date.now();
     yield { type: 'agent_start', agentId: extr.id, message: 'Extracting data...' };
-    extr.output = facts || (searchText ? `Web search found ${searchResults.length} results:\n\n${searchText.slice(0, 500)}` : 'Data extraction in progress.');
+    extr.output = facts || (searchText ? `Found ${searchResults.length} web results:\n\n${searchText.slice(0, 500)}` : 'Data gathered from training knowledge.');
     extr.status = 'completed'; extr.endTime = Date.now();
     yield { type: 'agent_complete', agentId: extr.id, data: extr.output };
 
+    // Reasoning Engine
     const reas = agents.find(a => a.id === 'reasoning_engine')!;
     reas.status = 'running'; reas.startTime = Date.now();
     yield { type: 'agent_start', agentId: reas.id, message: 'Analyzing findings...' };
@@ -148,38 +198,38 @@ Provide a complete, accurate answer.`,
     reas.status = 'completed'; reas.endTime = Date.now();
     yield { type: 'agent_complete', agentId: reas.id, data: reas.output };
 
+    // Synthesizer — build report
     const synth = agents.find(a => a.id === 'synthesizer')!;
     synth.status = 'running'; synth.startTime = Date.now();
-    yield { type: 'agent_start', agentId: synth.id, message: 'Writing report...' };
+    yield { type: 'agent_start', agentId: synth.id, message: 'Writing final report...' };
 
     const report = [
       `# ${req.query}\n`,
+      topic ? `*${topic}*\n` : '',
       `## 📌 Direct Answer`,
-      analysis || 'See below.',
+      analysis || 'See analysis below.',
       '',
       `## 📊 Key Facts & Data`,
-      facts || 'See analysis.',
-      '',
-      `## 🧠 Analysis`,
-      analysis || 'Analysis in progress.',
+      facts || 'See analysis above.',
       '',
       `## ✅ Conclusion`,
-      concl || analysis.split('\n').slice(-3).join('\n'),
-      searchText ? `\n*Sources: web search (${searchResults.length} results)*` : '',
-    ].join('\n');
+      concl || analysis?.split('\n').slice(-3).join('\n') || 'Analysis complete.',
+      searchResults.length > 0 ? `\n---\n*${searchResults.length} web sources consulted*` : '',
+    ].filter(Boolean).join('\n');
 
     synth.output = report; synth.status = 'completed'; synth.endTime = Date.now();
     yield { type: 'agent_complete', agentId: synth.id, data: report };
     yield { type: 'report', data: report };
 
+    // Quality Critic
     const crit = agents.find(a => a.id === 'critic')!;
     crit.status = 'running'; crit.startTime = Date.now();
     yield { type: 'agent_start', agentId: crit.id, message: 'Quality review...' };
-    crit.output = quality || `Report covers query: ${req.query.slice(0, 80)}`;
+    crit.output = sources || `Report covers: ${req.query.slice(0, 80)}`;
     crit.status = 'completed'; crit.endTime = Date.now();
     yield { type: 'agent_complete', agentId: crit.id, data: crit.output };
 
-    console.log(`[Pipe] ✓ ${Date.now()-t0}ms | ${searchResults.length} web results`);
+    console.log(`[Pipe] ✓ ${Date.now()-t0}ms | ${searchResults.length} web | ${raw.length}c`);
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     console.error('[Pipe] ✗', m);
