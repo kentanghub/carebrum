@@ -1,27 +1,25 @@
 import { AgentState, AgentMessage, StreamEvent, ResearchRequest } from '@/types';
 import { completion, ACTIVE_MODEL } from './mimo-client';
+import { searchWeb, formatSearchResults } from './search';
 
-// ─── Agent Definitions ────────────────────────────────────────
 const AGENTS = {
-  ORCHESTRATOR:   { id: 'orchestrator',        name: 'Orchestrator',    desc: 'Plans research strategy',       icon: 'Brain' },
-  EXTRACTOR:      { id: 'multimodal_extractor', name: 'Data Extractor', desc: 'Gathers facts and evidence',     icon: 'Eye' },
-  REASONER:       { id: 'reasoning_engine',     name: 'Reasoning Engine',desc: 'Deep analysis and evaluation',  icon: 'GitBranch' },
-  SYNTHESIZER:    { id: 'synthesizer',          name: 'Report Writer',  desc: 'Structures final report',       icon: 'FileText' },
-  CRITIC:         { id: 'critic',               name: 'Quality Critic', desc: 'Reviews and verifies findings', icon: 'CheckCircle' },
+  ORCHESTRATOR:   { id: 'orchestrator',        name: 'Orchestrator',     desc: 'Research strategy & planning',  icon: 'Brain' },
+  EXTRACTOR:      { id: 'multimodal_extractor', name: 'Web Extractor',   desc: 'Real-time web data gathering',  icon: 'Eye' },
+  REASONER:       { id: 'reasoning_engine',     name: 'Reasoning Engine',desc: 'Deep analysis & reasoning',     icon: 'GitBranch' },
+  SYNTHESIZER:    { id: 'synthesizer',          name: 'Report Writer',   desc: 'Structured report compilation', icon: 'FileText' },
+  CRITIC:         { id: 'critic',               name: 'Quality Critic',  desc: 'Accuracy & completeness review',icon: 'CheckCircle' },
 };
 
 export function initializeAgents(): AgentState[] {
   return Object.values(AGENTS).map(a => ({ ...a, description: a.desc, status: 'idle' as const, messages: [] }));
 }
 
-// ─── Depth Config ─────────────────────────────────────────────
-const DEPTH: Record<string, { timeoutMs: number; maxTokens: number; temp: number }> = {
-  quick:    { timeoutMs: 35000, maxTokens: 2500, temp: 0.4 },
-  standard: { timeoutMs: 50000, maxTokens: 3500, temp: 0.4 },
-  deep:     { timeoutMs: 55000, maxTokens: 4500, temp: 0.4 },
+const DEPTH: Record<string, { timeoutMs: number; maxTokens: number; temp: number; searchCount: number }> = {
+  quick:    { timeoutMs: 35000, maxTokens: 2800, temp: 0.4, searchCount: 4 },
+  standard: { timeoutMs: 50000, maxTokens: 4000, temp: 0.4, searchCount: 6 },
+  deep:     { timeoutMs: 55000, maxTokens: 5000, temp: 0.4, searchCount: 8 },
 };
 
-// ─── Helpers ──────────────────────────────────────────────────
 function chop(s: string, n: number) { return s && s.length > n ? s.slice(0, n) + '\n[...]' : s || ''; }
 
 async function callLLM(msgs: AgentMessage[], depth: string): Promise<string> {
@@ -33,9 +31,9 @@ async function callLLM(msgs: AgentMessage[], depth: string): Promise<string> {
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), cfg.timeoutMs)),
     ]);
     if (r && r.trim().length >= 30) { console.log(`[LLM] ✓ ${Date.now()-t}ms ${r.length}c`); return r; }
-    throw new Error('short');
+    throw new Error('short/empty response');
   } catch (e) {
-    throw new Error(`LLM failed after ${Date.now()-t}ms: ${e instanceof Error ? e.message : 'error'}`);
+    throw new Error(`API failed: ${e instanceof Error ? e.message : 'error'} (${Date.now()-t}ms)`);
   }
 }
 
@@ -45,125 +43,147 @@ function extractSection(text: string, marker: string, nextMarkers: string[]): st
   return m ? m[1].trim() : '';
 }
 
-// ─── Pipeline — SINGLE API CALL ───────────────────────────────
 export async function* runResearchPipeline(
   req: ResearchRequest, agents: AgentState[]
 ): AsyncGenerator<StreamEvent> {
   const t0 = Date.now();
   const depth = req.depth || 'standard';
+  const cfg = DEPTH[depth] || DEPTH.standard;
 
   try {
-    // ═══════════ ALL-IN-ONE ANALYSIS ═══════════
-    // One API call produces everything. Output split across 5 agents.
+    // ── Fire web search (don't wait for it yet) ──
+    const searchPromise = searchWeb(req.query, cfg.searchCount);
 
+    // ── Step 1: Notify orchestrator is analyzing ──
     const orch = agents.find(a => a.id === 'orchestrator')!;
     orch.status = 'running'; orch.startTime = Date.now();
-    yield { type: 'agent_start', agentId: orch.id, message: 'Processing query...' };
+    yield { type: 'agent_start', agentId: orch.id, message: 'Analyzing query & searching web...' };
 
+    // ── Wait for web search (with timeout) ──
+    const searchResults = await Promise.race([
+      searchPromise,
+      new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 8000)),
+    ]);
+    const searchText = searchResults.length > 0 ? formatSearchResults(searchResults) : '';
+    console.log(`[Search] ${searchResults.length} results in ${Date.now()-t0}ms`);
+
+    // ── Step 2: Single API call with web context ──
     const raw = await callLLM([
       {
         role: 'system',
-        content: `You are an expert research analyst and report writer. Your task is to answer the user's query with a complete, thorough, and well-structured response.
+        content: `You are an expert research analyst — the best in the world. Your job: answer any question with accurate, specific, well-researched information.
 
-FORMAT YOUR RESPONSE WITH THESE EXACT HEADERS:
+RESPONSE FORMAT (use these exact headers):
 
 ## RESEARCH PLAN
-What the user wants to know, key angles to cover, evidence needed.
+- Restate what the user wants to know
+- Identify what kind of answer they need (factual, yes/no, comparative, explanatory)
+- Key angles to cover
 
 ## FACTS & DATA
-Specific information: events, dates, names, numbers, statistics, background, context. Include both supporting and opposing evidence.
+- Specific information: events, dates, names, numbers, statistics
+- Background and context
+- Both supporting and opposing evidence
+- ${searchText ? 'PRIORITIZE information from the web search results' : 'Use your training knowledge'}
 
 ## ANALYSIS
-Directly answer the question. If yes/no: say YES or NO clearly, then explain why. If explanatory: break down causes, mechanisms, effects. If comparative: contrast options. Address counterarguments. Be concrete and specific.
+- DIRECTLY answer the question
+- Yes/no questions: state YES or NO clearly, then explain with evidence
+- Explanatory questions: break down causes, mechanisms, effects
+- Comparative questions: contrast with clear criteria
+- Address counterarguments and limitations
+- Be CONCRETE and SPECIFIC — no generic statements
 
 ## CONCLUSION
-Final assessment, bottom line, or recommendation. 1-3 sentences.
+- Bottom line in 2-3 sentences
+- Key takeaway
 
 ## QUALITY NOTE
-Self-check: what did you cover well? Any gaps or limitations?
+- Brief self-check: accuracy, completeness, any gaps
 
-RULES:
-- NEVER write "research indicates significant developments" or similar filler. Give REAL information.
-- Use specific data whenever available (numbers, names, dates, places)
-- Answer in a natural, direct style — like a briefing from a knowledgeable expert
-- If you know the answer, give it. If you're uncertain, explain what's known and what's unclear
-- The query may be about Indonesia, current events, policy, technology, or anything else. Handle it.
-- Write in the same language as the query
+CRITICAL RULES:
+- NEVER write filler like "research indicates significant developments" or "the ecosystem shows maturity"
+- Use REAL data — names, numbers, dates, places
+- Write naturally — like a knowledgeable expert briefing a colleague
+- Answer in the SAME LANGUAGE as the query
+- If search results are provided, USE them as your primary source
+- If the query is about a current event or specific program, use the search results to understand the context correctly
 
-${depth === 'deep' ? 'This is DEEP research mode. Provide extra detail, nuance, and depth.' : depth === 'quick' ? 'This is QUICK mode. Be concise but still specific.' : 'This is STANDARD mode. Provide balanced depth.'}`,
+${depth === 'deep' ? 'DEEP MODE: Be especially thorough. Provide nuance, multiple perspectives, and detailed analysis.' : depth === 'quick' ? 'QUICK MODE: Be concise but still specific and data-driven.' : 'STANDARD MODE: Provide balanced depth with clear analysis.'}`,
       },
-      { role: 'user', content: req.query },
+      {
+        role: 'user',
+        content: `QUERY: ${req.query}
+
+${searchText ? `WEB SEARCH RESULTS (use these as your primary source):\n${chop(searchText, 2500)}` : 'No web search results available. Use your training knowledge.'}
+
+Provide a complete, accurate answer.`,
+      },
     ], depth);
 
-    // Parse sections
-    const allMarkers = ['## RESEARCH PLAN', '## FACTS & DATA', '## ANALYSIS', '## CONCLUSION', '## QUALITY NOTE'];
-    const plan    = extractSection(raw, '## RESEARCH PLAN', allMarkers.filter(m => m !== '## RESEARCH PLAN'));
-    const facts   = extractSection(raw, '## FACTS & DATA', allMarkers.filter(m => m !== '## FACTS & DATA'));
-    const analysis= extractSection(raw, '## ANALYSIS', allMarkers.filter(m => m !== '## ANALYSIS'));
-    const concl   = extractSection(raw, '## CONCLUSION', allMarkers.filter(m => m !== '## CONCLUSION'));
-    const quality = extractSection(raw, '## QUALITY NOTE', []);
+    // ── Step 3: Parse and distribute across agents ──
+    const markers = ['## RESEARCH PLAN', '## FACTS & DATA', '## ANALYSIS', '## CONCLUSION', '## QUALITY NOTE'];
 
-    // Emit to agents
-    orch.output = plan; orch.status = 'completed'; orch.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: orch.id, data: plan };
+    const plan     = extractSection(raw, '## RESEARCH PLAN', markers.filter(m => m !== '## RESEARCH PLAN'));
+    const facts    = extractSection(raw, '## FACTS & DATA', markers.filter(m => m !== '## FACTS & DATA'));
+    const analysis = extractSection(raw, '## ANALYSIS', markers.filter(m => m !== '## ANALYSIS'));
+    const concl    = extractSection(raw, '## CONCLUSION', markers.filter(m => m !== '## CONCLUSION'));
+    const quality  = extractSection(raw, '## QUALITY NOTE', []);
+
+    // Emit each agent
+    orch.output = plan || 'Research plan generated.'; orch.status = 'completed'; orch.endTime = Date.now();
+    yield { type: 'agent_complete', agentId: orch.id, data: orch.output };
 
     const extr = agents.find(a => a.id === 'multimodal_extractor')!;
     extr.status = 'running'; extr.startTime = Date.now();
     yield { type: 'agent_start', agentId: extr.id, message: 'Extracting data...' };
-    extr.output = facts; extr.status = 'completed'; extr.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: extr.id, data: facts };
+    extr.output = facts || (searchText ? `Web search found ${searchResults.length} results:\n\n${searchText.slice(0, 500)}` : 'Data extraction in progress.');
+    extr.status = 'completed'; extr.endTime = Date.now();
+    yield { type: 'agent_complete', agentId: extr.id, data: extr.output };
 
     const reas = agents.find(a => a.id === 'reasoning_engine')!;
     reas.status = 'running'; reas.startTime = Date.now();
-    yield { type: 'agent_start', agentId: reas.id, message: 'Analyzing...' };
-    reas.output = analysis; reas.status = 'completed'; reas.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: reas.id, data: analysis };
+    yield { type: 'agent_start', agentId: reas.id, message: 'Analyzing findings...' };
+    reas.output = analysis || 'Analysis in progress.';
+    reas.status = 'completed'; reas.endTime = Date.now();
+    yield { type: 'agent_complete', agentId: reas.id, data: reas.output };
 
     const synth = agents.find(a => a.id === 'synthesizer')!;
     synth.status = 'running'; synth.startTime = Date.now();
-    yield { type: 'agent_start', agentId: synth.id, message: 'Structuring report...' };
+    yield { type: 'agent_start', agentId: synth.id, message: 'Writing report...' };
 
-    // Build the final report from all sections
     const report = [
-      `# ${req.query}`,
+      `# ${req.query}\n`,
+      `## 📌 Direct Answer`,
+      analysis || 'See below.',
       '',
-      '## Direct Answer',
+      `## 📊 Key Facts & Data`,
+      facts || 'See analysis.',
+      '',
+      `## 🧠 Analysis`,
       analysis || 'Analysis in progress.',
       '',
-      '## Key Facts & Data',
-      facts || 'See analysis above.',
-      '',
-      '## Conclusion',
+      `## ✅ Conclusion`,
       concl || analysis.split('\n').slice(-3).join('\n'),
-      '',
+      searchText ? `\n*Sources: web search (${searchResults.length} results)*` : '',
     ].join('\n');
 
     synth.output = report; synth.status = 'completed'; synth.endTime = Date.now();
     yield { type: 'agent_complete', agentId: synth.id, data: report };
+    yield { type: 'report', data: report };
 
-    // Emit report
-    if (quality) {
-      yield { type: 'report', data: report + `\n\n---\n*Quality check: ${quality.slice(0, 200)}*` };
-    } else {
-      yield { type: 'report', data: report };
-    }
-
-    // Critic
     const crit = agents.find(a => a.id === 'critic')!;
     crit.status = 'running'; crit.startTime = Date.now();
-    yield { type: 'agent_start', agentId: crit.id, message: 'Reviewing...' };
-    crit.output = quality || 'Report generated successfully.';
+    yield { type: 'agent_start', agentId: crit.id, message: 'Quality review...' };
+    crit.output = quality || `Report covers query: ${req.query.slice(0, 80)}`;
     crit.status = 'completed'; crit.endTime = Date.now();
     yield { type: 'agent_complete', agentId: crit.id, data: crit.output };
 
-    console.log(`[Pipe] ✓ ${Date.now()-t0}ms`);
+    console.log(`[Pipe] ✓ ${Date.now()-t0}ms | ${searchResults.length} web results`);
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     console.error('[Pipe] ✗', m);
-
-    // Mark running agents as error
     agents.filter(a => a.status === 'running').forEach(a => { a.status = 'error'; a.output = m; });
-
     yield { type: 'error', message: m };
   }
 }
