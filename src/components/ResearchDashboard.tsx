@@ -23,10 +23,6 @@ import {
   BrainCircuit,
   Code2,
   FileText,
-  Eye,
-  GitBranch,
-  CheckCircle,
-  Brain,
 } from 'lucide-react';
 
 const DEPTH_OPTIONS = [
@@ -172,10 +168,32 @@ export default function ResearchDashboard() {
         }
       }
     } catch (error) {
-      if (error instanceof Error && error.name !== 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
+        addLog('✗ Research cancelled by user');
+        // Show whatever partial report we have
+        if (!showReport && agents.some(a => a.status === 'completed')) {
+          const partial = agents
+            .filter(a => a.output && a.status === 'completed')
+            .map(a => `### ${a.name}\n\n${a.output}`)
+            .join('\n\n---\n\n');
+          if (partial) {
+            setReport(`# Partial Research Report\n\n*Research was cancelled before completion. Below are results from agents that finished.*\n\n${partial}`);
+            setShowReport(true);
+          }
+        }
+      } else if (error instanceof Error) {
         const errMsg = error.message || 'Unknown error occurred';
         addLog(`✗ Error: ${errMsg}`);
         console.error('Research error:', error);
+        // Show partial report on error too
+        const completedAgents = agents.filter(a => a.output && a.status === 'completed');
+        if (completedAgents.length > 0 && !showReport) {
+          const partial = completedAgents
+            .map(a => `### ${a.name}\n\n${a.output}`)
+            .join('\n\n---\n\n');
+          setReport(`# Partial Research Report\n\n*An error occurred: ${errMsg}. Below are results from agents that completed successfully.*\n\n${partial}`);
+          setShowReport(true);
+        }
       }
     } finally {
       setIsRunning(false);
@@ -254,7 +272,11 @@ export default function ResearchDashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `carebrum-report-${Date.now()}.md`;
+    const safeName = query
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fff\s-]/g, '')
+      .trim()
+      .slice(0, 50) || 'research';
+    a.download = `carebrum-${safeName.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -285,7 +307,7 @@ export default function ResearchDashboard() {
           <div className="flex items-center gap-3">
             <span className="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-400 px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/[0.04]">
               <Sparkles className="w-3 h-3 text-green-400" />
-              Powered by Bluesminds
+              Powered by AI
             </span>
             <a
               href="https://github.com/kentanghub/carebrum"
@@ -318,7 +340,7 @@ export default function ResearchDashboard() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="What would you like to research? Try: 'Impact of generative AI on software development jobs in 2025'"
-                  className={`w-full h-20 sm:h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none`}
+                  className="w-full h-20 sm:h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none"
                   disabled={isRunning}
                 />
                 <div className="absolute bottom-3 right-3 text-[10px] text-gray-600 font-mono">
@@ -356,7 +378,7 @@ export default function ResearchDashboard() {
                 {DEPTH_OPTIONS.map((option) => (
                   <button
                     key={option.value}
-                    onClick={() => setDepth(option.value as any)}
+                    onClick={() => !isRunning && setDepth(option.value as any)}
                     disabled={isRunning}
                     className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-300 ${
                       depth === option.value
@@ -394,35 +416,17 @@ export default function ResearchDashboard() {
               </div>
             </div>
 
-            {/* Multimodal toggle + Action button */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <div
-                  className={`relative w-9 h-5 rounded-full transition-colors ${
-                    multimodal ? 'bg-green-500' : 'bg-white/[0.06]'
-                  }`}
-                  onClick={() => !isRunning && setMultimodal(!multimodal)}
-                >
-                  <motion.div
-                    className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm"
-                    animate={{ x: multimodal ? 16 : 0 }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  />
-                </div>
-                <span className="text-xs text-gray-400">
-                  Multimodal Analysis
-                </span>
-                <span className="text-[10px] text-gray-600">(Omni)</span>
-              </label>
-
+            {/* Action button */}
+            <div className="flex justify-end">
               <motion.button
                 onClick={isRunning ? stopResearch : runResearch}
-                disabled={isRunning}
-                whileHover={!isRunning ? { scale: 1.02 } : {}}
-                whileTap={!isRunning ? { scale: 0.98 } : {}}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm transition-all ${
                   isRunning
-                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 cursor-not-allowed opacity-70'
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
+                    : !query.trim()
+                    ? 'bg-white/[0.03] text-gray-500 border border-white/[0.04] cursor-not-allowed'
                     : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/20 hover:shadow-green-500/30'
                 }`}
               >

@@ -34,6 +34,44 @@ const AGENT_DEFINITIONS = {
   },
 };
 
+// ─── Depth-based configuration ───────────────────────────────
+interface DepthConfig {
+  totalBudgetMs: number;
+  orchestrator: { timeoutMs: number; maxTokens: number; temperature: number };
+  research: { timeoutMs: number; maxTokens: number; temperature: number };
+  synthesizer: { timeoutMs: number; maxTokens: number; temperature: number };
+  critic: { timeoutMs: number; maxTokens: number; temperature: number };
+}
+
+const DEPTH_CONFIGS: Record<string, DepthConfig> = {
+  quick: {
+    totalBudgetMs: 25000, // 25s
+    orchestrator: { timeoutMs: 6000, maxTokens: 256, temperature: 0.3 },
+    research: { timeoutMs: 10000, maxTokens: 768, temperature: 0.3 },
+    synthesizer: { timeoutMs: 8000, maxTokens: 1024, temperature: 0.4 },
+    critic: { timeoutMs: 4000, maxTokens: 192, temperature: 0.3 },
+  },
+  standard: {
+    totalBudgetMs: 52000, // 52s — safe within Vercel 60s
+    orchestrator: { timeoutMs: 10000, maxTokens: 512, temperature: 0.3 },
+    research: { timeoutMs: 18000, maxTokens: 1536, temperature: 0.3 },
+    synthesizer: { timeoutMs: 20000, maxTokens: 2048, temperature: 0.4 },
+    critic: { timeoutMs: 8000, maxTokens: 384, temperature: 0.3 },
+  },
+  deep: {
+    totalBudgetMs: 88000, // 88s — note: may time out on Vercel Hobby
+    orchestrator: { timeoutMs: 15000, maxTokens: 768, temperature: 0.3 },
+    research: { timeoutMs: 30000, maxTokens: 2560, temperature: 0.3 },
+    synthesizer: { timeoutMs: 40000, maxTokens: 3072, temperature: 0.4 },
+    critic: { timeoutMs: 15000, maxTokens: 512, temperature: 0.3 },
+  },
+};
+
+function getDepthConfig(depth: string): DepthConfig {
+  return DEPTH_CONFIGS[depth] || DEPTH_CONFIGS.standard;
+}
+
+// ─── Agent factory ────────────────────────────────────────────
 function createAgentState(def: typeof AGENT_DEFINITIONS[keyof typeof AGENT_DEFINITIONS]): AgentState {
   return { ...def, status: 'idle', messages: [] };
 }
@@ -42,7 +80,7 @@ export function initializeAgents(): AgentState[] {
   return Object.values(AGENT_DEFINITIONS).map(createAgentState);
 }
 
-// Robust completion: always returns string, never throws, handles all errors
+// ─── Robust LLM caller ────────────────────────────────────────
 async function callLLM(
   messages: AgentMessage[],
   config: { model: string; temperature: number; max_tokens: number; timeoutMs: number },
@@ -76,23 +114,25 @@ async function callLLM(
   }
 }
 
-// Truncate text to keep prompts small
+// ─── Helpers ──────────────────────────────────────────────────
 function clip(text: string, maxLen: number): string {
   if (!text || text.length <= maxLen) return text;
   return text.slice(0, maxLen) + '\n\n[...trimmed...]';
 }
 
+// ─── Main pipeline ────────────────────────────────────────────
 export async function* runResearchPipeline(
   request: ResearchRequest,
   agents: AgentState[]
 ): AsyncGenerator<StreamEvent> {
   const t0 = Date.now();
-  const TOTAL_BUDGET_MS = 52000; // Leave 8s buffer for Vercel 60s limit
+  const dc = getDepthConfig(request.depth || 'standard');
+  const TOTAL_BUDGET_MS = dc.totalBudgetMs;
 
   const timeLeft = () => TOTAL_BUDGET_MS - (Date.now() - t0);
 
   try {
-    // ===================== STEP 1: ORCHESTRATOR =====================
+    // =================== STEP 1: ORCHESTRATOR ===================
     const orchestrator = agents.find(a => a.id === 'orchestrator')!;
     orchestrator.status = 'running';
     orchestrator.startTime = Date.now();
@@ -113,11 +153,18 @@ Max 250 words. Be concise.`,
       { role: 'user', content: `Query: "${request.query}"\nDepth: ${request.depth || 'standard'}` },
     ];
 
+    const planFallback = `## Plan: ${request.query}\n\n1. What is the current state?\n2. What drives change?\n3. What are risks and opportunities?`;
+
     const plan = await callLLM(
       planPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 512, timeoutMs: 10000 },
+      {
+        model: ACTIVE_MODEL,
+        temperature: dc.orchestrator.temperature,
+        max_tokens: dc.orchestrator.maxTokens,
+        timeoutMs: dc.orchestrator.timeoutMs,
+      },
       'Orchestrator',
-      `## Plan: ${request.query}\n\n1. What is the current state?\n2. What drives change?\n3. What are risks and opportunities?`
+      planFallback
     );
 
     orchestrator.output = plan;
@@ -125,8 +172,8 @@ Max 250 words. Be concise.`,
     orchestrator.endTime = Date.now();
     yield { type: 'agent_complete', agentId: orchestrator.id, data: plan };
 
-    // ===================== STEP 2: EXTRACTOR + REASONING (COMBINED) =====================
-    // We make ONE API call but emit events for BOTH agents
+    // =================== STEP 2: EXTRACTOR + REASONING ===================
+    // Single API call → emit for both agents
 
     // --- Extractor ---
     const extractor = agents.find(a => a.id === 'multimodal_extractor')!;
@@ -153,7 +200,7 @@ Max 250 words. Be concise.`,
 - Risk assessment: worst cases?
 - Opportunities: biggest wins?
 
-Max 1200 words total. Be factual and specific.`,
+Max ${Math.floor(dc.research.maxTokens * 0.75)} words. Be factual and specific.`,
       },
       {
         role: 'user',
@@ -161,11 +208,18 @@ Max 1200 words total. Be factual and specific.`,
       },
     ];
 
+    const researchFallback = `## PART A: Extracted Facts\n\nKey facts for "${request.query}": significant activity, growing adoption, major stakeholders include industry leaders and regulators.\n\n## PART B: Reasoning Analysis\n\n**Patterns:** Accelerating growth driven by technology.\n**Causes:** Market demand + innovation.\n**Biases:** May understate regulatory risks.\n**Future:** Continued expansion.\n**Risks:** Regulation, competition.\n**Opportunities:** Emerging markets.`;
+
     const combinedOutput = await callLLM(
       researchPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 1536, timeoutMs: 18000 },
+      {
+        model: ACTIVE_MODEL,
+        temperature: dc.research.temperature,
+        max_tokens: dc.research.maxTokens,
+        timeoutMs: dc.research.timeoutMs,
+      },
       'Research Analyst',
-      `## PART A: Extracted Facts\n\nKey facts for "${request.query}": significant activity, growing adoption, major stakeholders include industry leaders and regulators.\n\n## PART B: Reasoning Analysis\n\n**Patterns:** Accelerating growth driven by technology.\n**Causes:** Market demand + innovation.\n**Biases:** May understate regulatory risks.\n**Future:** Continued expansion.\n**Risks:** Regulation, competition.\n**Opportunities:** Emerging markets.`
+      researchFallback
     );
 
     // Emit Extractor complete
@@ -177,7 +231,7 @@ Max 1200 words total. Be factual and specific.`,
     extractor.endTime = Date.now();
     yield { type: 'agent_complete', agentId: extractor.id, data: extractPart };
 
-    // --- Reasoning (emit from same output, no extra API call) ---
+    // --- Reasoning (from same output) ---
     const reasoner = agents.find(a => a.id === 'reasoning_engine')!;
     reasoner.status = 'running';
     reasoner.startTime = Date.now();
@@ -191,7 +245,7 @@ Max 1200 words total. Be factual and specific.`,
     reasoner.endTime = Date.now();
     yield { type: 'agent_complete', agentId: reasoner.id, data: reasoningPart };
 
-    // ===================== STEP 3: SYNTHESIZER =====================
+    // =================== STEP 3: SYNTHESIZER ===================
     const synthesizer = agents.find(a => a.id === 'synthesizer')!;
     synthesizer.status = 'running';
     synthesizer.startTime = Date.now();
@@ -218,12 +272,12 @@ Structure:
 
 # Detailed Analysis
 - Expand on the most important findings
-- Use tables or bullet points for clarity
+- Use bullet points for clarity
 
 # Conclusion
 - Final verdict / recommendation
 
-Style: Concise, factual, well-structured. Max 1500 words.`,
+Style: Concise, factual, well-structured. Max ${Math.floor(dc.synthesizer.maxTokens * 0.75)} words.`,
       },
       {
         role: 'user',
@@ -231,11 +285,18 @@ Style: Concise, factual, well-structured. Max 1500 words.`,
       },
     ];
 
+    const reportFallback = `# Direct Answer: ${request.query}\n\n- The research indicates significant developments in this area\n- Multiple factors are driving current trends\n- Key opportunities and risks have been identified\n\n# Research Plan Summary\nA multi-agent approach was used to analyze the topic comprehensively.\n\n# Key Findings\n1. **Market Growth**: Strong upward trajectory\n2. **Innovation**: Technology accelerating change\n3. **Regulation**: Evolving framework\n\n# Detailed Analysis\nThe ecosystem shows maturity with increasing adoption.\n\n# Conclusion\nPositive outlook with continued growth expected.`;
+
     const report = await callLLM(
       synthPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.4, max_tokens: 2048, timeoutMs: Math.min(20000, timeLeft() - 5000) },
+      {
+        model: ACTIVE_MODEL,
+        temperature: dc.synthesizer.temperature,
+        max_tokens: dc.synthesizer.maxTokens,
+        timeoutMs: Math.min(dc.synthesizer.timeoutMs, timeLeft() - 5000),
+      },
       'Synthesizer',
-      `# Direct Answer: ${request.query}\n\n- The research indicates significant developments in this area\n- Multiple factors are driving current trends\n- Key opportunities and risks have been identified\n\n# Research Plan Summary\nA multi-agent approach was used to analyze the topic comprehensively.\n\n# Key Findings\n1. **Market Growth**: Strong upward trajectory\n2. **Innovation**: Technology accelerating change\n3. **Regulation**: Evolving framework\n\n# Detailed Analysis\nThe ecosystem shows maturity with increasing adoption.\n\n# Conclusion\nPositive outlook with continued growth expected.`
+      reportFallback
     );
 
     synthesizer.output = report;
@@ -246,44 +307,75 @@ Style: Concise, factual, well-structured. Max 1500 words.`,
     // Emit report immediately
     yield { type: 'report', data: report };
 
-    // ===================== STEP 4: CRITIC (fast) =====================
-    const critic = agents.find(a => a.id === 'critic')!;
-    critic.status = 'running';
-    critic.startTime = Date.now();
-    yield { type: 'agent_start', agentId: critic.id, message: 'Reviewing quality...' };
+    // =================== STEP 4: CRITIC (optional / fast) ===================
+    // Only run critic if we have enough time left
+    if (timeLeft() > dc.critic.timeoutMs + 3000) {
+      const critic = agents.find(a => a.id === 'critic')!;
+      critic.status = 'running';
+      critic.startTime = Date.now();
+      yield { type: 'agent_start', agentId: critic.id, message: 'Reviewing quality...' };
 
-    const criticPrompt: AgentMessage[] = [
-      {
-        role: 'system',
-        content: `Quick quality review. Score 1-10 and 2 suggestions. Max 100 words.`,
-      },
-      {
-        role: 'user',
-        content: `Report on "${request.query}":\n${clip(report, 1500)}\n\nScore and suggest improvements:`,
-      },
-    ];
+      const criticPrompt: AgentMessage[] = [
+        {
+          role: 'system',
+          content: `Quick quality review. Score 1-10 and 2 suggestions. Max 100 words.`,
+        },
+        {
+          role: 'user',
+          content: `Report on "${request.query}":\n${clip(report, 1500)}\n\nScore and suggest improvements:`,
+        },
+      ];
 
-    const criticOutput = await callLLM(
-      criticPrompt,
-      { model: ACTIVE_MODEL, temperature: 0.3, max_tokens: 384, timeoutMs: Math.min(8000, timeLeft() - 2000) },
-      'Critic',
-      `**Quality Score: 8/10**\n\nStrengths: Clear structure, actionable recommendations.\nSuggestions: Add more specific data points, expand regional analysis.`
-    );
+      const criticFallback = `**Quality Score: 8/10**\n\nStrengths: Clear structure, actionable recommendations.\nSuggestions: Add more specific data points, expand regional analysis.`;
 
-    critic.output = criticOutput;
-    critic.status = 'completed';
-    critic.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: critic.id, data: criticOutput };
+      const criticOutput = await callLLM(
+        criticPrompt,
+        {
+          model: ACTIVE_MODEL,
+          temperature: dc.critic.temperature,
+          max_tokens: dc.critic.maxTokens,
+          timeoutMs: Math.min(dc.critic.timeoutMs, timeLeft() - 2000),
+        },
+        'Critic',
+        criticFallback
+      );
 
-    // Append quality review to report
-    const qualityNote = `\n\n---\n\n*Quality Review*\n\n${criticOutput}`;
-    yield { type: 'report', data: report + qualityNote };
+      critic.output = criticOutput;
+      critic.status = 'completed';
+      critic.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: critic.id, data: criticOutput };
 
-    console.log(`[Pipeline] Done in ${Date.now() - t0}ms`);
+      // Append quality review to report
+      const qualityNote = `\n\n---\n\n*Quality Review*\n\n${criticOutput}`;
+      yield { type: 'report', data: report + qualityNote };
+    } else {
+      // Mark critic as skipped due to time
+      const critic = agents.find(a => a.id === 'critic')!;
+      critic.status = 'completed';
+      critic.output = 'Skipped — insufficient time budget remaining';
+      critic.startTime = Date.now();
+      critic.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: critic.id, data: critic.output };
+    }
+
+    console.log(`[Pipeline] Done in ${Date.now() - t0}ms (depth: ${request.depth || 'standard'})`);
 
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('[Pipeline] Fatal:', errorMsg);
+
+    // Emit error but also emit whatever partial data we have as a report
+    const completedAgents = agents.filter(a => a.output && a.status === 'completed');
+    if (completedAgents.length > 0) {
+      const partialReport = completedAgents
+        .map(a => `### ${a.name}\n\n${a.output}`)
+        .join('\n\n---\n\n');
+      yield {
+        type: 'report',
+        data: `# Partial Research Report\n\n*⚠️ Pipeline encountered an error: ${errorMsg}. Below are results from agents that completed.*\n\n${partialReport}`,
+      };
+    }
+
     yield { type: 'error', message: errorMsg };
   }
 }
