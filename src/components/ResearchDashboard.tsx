@@ -333,13 +333,13 @@ export default function ResearchDashboard() {
             {/* Input Area */}
             <div className="mb-5">
               <label className="block text-sm font-medium text-gray-400 mb-2">
-                Research Query
+                Ask Anything
               </label>
               <div className="relative">
                 <textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="What would you like to research? Try: 'Impact of generative AI on software development jobs in 2025'"
+                  placeholder="Any question, any topic — from global politics to local policy. Try: 'What's the future of AI?' or 'Is nuclear energy making a comeback?'"
                   className="w-full h-20 sm:h-28 p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none"
                   disabled={isRunning}
                 />
