@@ -1,38 +1,49 @@
 # Cerebrum — Multi-Agent Research System
 
-> **AI-powered multi-agent research assistant that completes deep research in under 60 seconds.**
+> **AI-powered research assistant that combines real-time web search with multi-agent intelligence to deliver publication-quality reports in under 60 seconds.**
 
-Cerebrum orchestrates 5 specialized AI agents that collaborate to extract, reason, synthesize, and review information — producing publication-quality research reports from a single query.
+Cerebrum searches the web live, then orchestrates 5 specialized AI agents to extract, reason, synthesize, and review — turning any question into a well-structured, data-backed report.
 
 ## 🔧 How It Works
 
-### Multi-Agent Pipeline
+### Pipeline
 
 ```
-User Query → Orchestrator → Extractor + Reasoner → Synthesizer → Critic → Report
+User Query → Web Search (DuckDuckGo) → Single LLM Call → 5-Agent Output → Report
 ```
 
-| # | Agent | Role |
-|---|-------|------|
-| 1 | **Orchestrator** | Analyzes query, creates research plan |
-| 2 | **Multimodal Extractor** | Gathers facts, data, stakeholders |
-| 3 | **Reasoning Engine** | Chain-of-thought analysis, patterns, risks |
-| 4 | **Report Synthesizer** | Compiles everything into a structured report |
-| 5 | **Quality Critic** | Scores and suggests improvements |
+Instead of making 5 separate API calls (which triggers rate limits), Cerebrum uses **one comprehensive prompt** that produces structured output covering Research Plan, Facts & Data, Analysis, Conclusion, and Quality Review. Each section is distributed to its corresponding agent in the UI.
+
+| # | Agent | Responsibility |
+|---|-------|----------------|
+| 1 | **Orchestrator** | Disambiguates query intent, identifies topic |
+| 2 | **Web Extractor** | Real-time web data gathering + fact extraction |
+| 3 | **Reasoning Engine** | Deep analysis, pro/contra, cause-effect reasoning |
+| 4 | **Report Synthesizer** | Compiles structured markdown report |
+| 5 | **Quality Critic** | Accuracy review, identifies limitations |
+
+### Real-Time Web Search
+
+Before the LLM processes your query, Cerebrum searches the web using multiple query variations — critical for:
+- **Current events & policies** (e.g., MBG, IKN, trade wars)
+- **Acronym disambiguation** (MBG = Makan Bergizi Gratis? Or Money Back Guarantee? Context matters)
+- **Niche topics** not in training data
+
+Falls back gracefully to training knowledge when search is unavailable.
 
 ### Research Depth Modes
 
-| Mode | Time | Best for |
-|------|------|----------|
-| Quick Scan | ~30s | Fast overview, headlines |
-| Standard | ~2min | Balanced depth (default) |
-| Deep Research | ~5min | Thorough analysis |
+| Mode | Time | Token Budget | Best for |
+|------|------|-------------|----------|
+| Quick Scan | ~35s | 2,800 | Fast overview, fact checking |
+| Standard | ~50s | 4,000 | Balanced depth (default) |
+| Deep Research | ~55s | 5,000 | Thorough analysis, more web sources |
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 - Node.js 18+
-- An API key from any OpenAI-compatible provider (Bluesminds, OpenRouter, MiMo, etc.)
+- An API key from any OpenAI-compatible provider (Bluesminds, MiMo, OpenRouter, etc.)
 
 ### Setup
 
@@ -65,12 +76,14 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## 🧱 Tech Stack
 
-- **Framework**: Next.js 16 (App Router)
+- **Framework**: Next.js 16 (App Router, Turbopack)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS 4, Framer Motion
 - **Markdown**: react-markdown + remark-gfm
 - **API Format**: OpenAI-compatible (`/v1/chat/completions`)
 - **Streaming**: Server-Sent Events (SSE)
+- **Web Search**: DuckDuckGo Lite (free, no API key needed)
+- **Deployment**: Vercel (auto-deploy on push)
 
 ## 📦 Project Structure
 
@@ -84,19 +97,26 @@ src/
 ├── components/
 │   ├── AgentNode.tsx             # Individual agent card
 │   ├── Logo.tsx                  # SVG logo
-│   ├── NeuralBackground.tsx      # Animated background
+│   ├── NeuralBackground.tsx      # Animated canvas background
 │   └── ResearchDashboard.tsx     # Main UI (client component)
 ├── lib/
-│   ├── agents.ts                 # Agent definitions + pipeline
-│   ├── mimo-client.ts            # LLM API client
+│   ├── agents.ts                 # Agent pipeline + prompt orchestration
+│   ├── mimo-client.ts            # LLM API client (OpenAI-compatible)
+│   ├── search.ts                 # Web search (DuckDuckGo with fallback)
 │   └── utils.ts                  # Utilities
 └── types/
-    └── index.ts                  # TypeScript types
+    └── index.ts                  # TypeScript type definitions
 ```
 
 ## 🌐 Live Demo
 
 **[carebrum.vercel.app](https://carebrum.vercel.app)**
+
+Try queries like:
+- *"Is nuclear energy making a comeback globally?"*
+- *"Apakah MBG bermanfaat di Indonesia?"*
+- *"What's the state of quantum computing in 2025?"*
+- *"Bagaimana dampak tarif Trump terhadap ekonomi ASEAN?"*
 
 ## 📄 License
 
