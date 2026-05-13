@@ -14,6 +14,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Shield,
 } from 'lucide-react';
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -22,6 +23,7 @@ const iconMap: Record<string, React.ReactNode> = {
   GitBranch: <GitBranch className="w-5 h-5" />,
   FileText: <FileText className="w-5 h-5" />,
   CheckCircle: <CheckCircle className="w-5 h-5" />,
+  Shield: <Shield className="w-5 h-5" />,
 };
 
 const statusConfig = {
@@ -61,6 +63,7 @@ const agentColors: Record<string, string> = {
   reasoning_engine: 'from-purple-500 to-violet-500',
   synthesizer: 'from-emerald-500 to-green-500',
   critic: 'from-amber-500 to-orange-500',
+  verifier: 'from-rose-500 to-pink-500',
 };
 
 const agentGlowColors: Record<string, string> = {
@@ -69,6 +72,7 @@ const agentGlowColors: Record<string, string> = {
   reasoning_engine: 'shadow-purple-500/20',
   synthesizer: 'shadow-emerald-500/20',
   critic: 'shadow-amber-500/20',
+  verifier: 'shadow-rose-500/20',
 };
 
 interface AgentNodeProps {

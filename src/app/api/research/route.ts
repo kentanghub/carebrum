@@ -7,19 +7,8 @@ export async function POST(req: NextRequest) {
     const request: ResearchRequest = await req.json();
     
     if (!request.query || request.query.trim() === '') {
-      return NextResponse.json(
-        { error: 'Query is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Query is required' }, { status: 400 });
     }
-
-    // Log environment status (without exposing secrets)
-    const hasBaseUrl = !!process.env.API_BASE_URL;
-    const hasApiKey = !!process.env.API_KEY;
-    const hasBrave = !!process.env.BRAVE_API_KEY;
-    const hasTavily = !!process.env.TAVILY_API_KEY;
-    const activeModel = process.env.ACTIVE_MODEL || 'not-set';
-    console.log(`[Research API] BaseURL: ${hasBaseUrl}, Key: ${hasApiKey}, Brave: ${hasBrave}, Tavily: ${hasTavily}, Model: ${activeModel}`);
 
     const agents = initializeAgents();
     
@@ -36,8 +25,7 @@ export async function POST(req: NextRequest) {
         } catch (error) {
           console.error('[Research API] Stream error:', error);
           const errorMessage = error instanceof Error ? error.message : 'Stream error';
-          const errorData = `data: ${JSON.stringify({ type: 'error', message: errorMessage })}\n\n`;
-          controller.enqueue(encoder.encode(errorData));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: errorMessage })}\n\n`));
           controller.close();
         }
       },
@@ -53,9 +41,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('[Research API] Fatal error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

@@ -47,6 +47,16 @@ const DEFAULT_AGENTS = [
   { id: 'reasoning_engine', name: 'Reasoning Engine', status: 'idle' as const, description: 'Performs deep chain-of-thought reasoning and verification', icon: 'GitBranch', messages: [] },
   { id: 'synthesizer', name: 'Report Synthesizer', status: 'idle' as const, description: 'Synthesizes findings into comprehensive report', icon: 'FileText', messages: [] },
   { id: 'critic', name: 'Quality Critic', status: 'idle' as const, description: 'Reviews and refines final output for accuracy', icon: 'CheckCircle', messages: [] },
+  { id: 'verifier', name: 'Fact Checker', status: 'idle' as const, description: 'Verifies claims against sources with confidence scoring', icon: 'Shield', messages: [] },
+];
+
+const TEMPLATE_OPTIONS = [
+  { id: 'general', name: 'General Research', icon: '🔬', desc: 'Balanced analysis for any topic' },
+  { id: 'market_analysis', name: 'Market Analysis', icon: '📊', desc: 'Industry, competitors, market size' },
+  { id: 'literature_review', name: 'Literature Review', icon: '📚', desc: 'Academic papers & methodologies' },
+  { id: 'competitor_analysis', name: 'Competitor Analysis', icon: '🏢', desc: 'Deep dive into competitors' },
+  { id: 'policy_brief', name: 'Policy Brief', icon: '🏛️', desc: 'Government policy analysis' },
+  { id: 'technical_deep_dive', name: 'Technical Deep Dive', icon: '⚙️', desc: 'Architecture & implementation' },
 ];
 
 export default function ResearchDashboard() {
@@ -74,6 +84,16 @@ export default function ResearchDashboard() {
   const [compareB, setCompareB] = useState('');
   const recognitionRef = useRef<any>(null);
   const [reportView, setReportView] = useState<'report' | 'timeline' | 'mindmap'>('report');
+
+  // ─── Template & Document state ───────────────────────────────────────────
+  const [selectedTemplate, setSelectedTemplate] = useState('general');
+  const [documentContent, setDocumentContent] = useState('');
+  const [documentName, setDocumentName] = useState('');
+  const [currentIteration, setCurrentIteration] = useState(0);
+  const [maxIterations, setMaxIterations] = useState(2);
+  const [verificationResult, setVerificationResult] = useState('');
+  const [showTemplates, setShowTemplates] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Stream state ────────────────────────────────────────────────────────
   const [streamingReport, setStreamingReport] = useState('');
@@ -175,6 +195,31 @@ export default function ResearchDashboard() {
     setLogs((prev) => [...prev.slice(-100), message]);
   }, []);
 
+  // ─── Document Upload ─────────────────────────────────────────────────────
+  const handleDocumentUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setDocumentName(file.name);
+    addLog(`📄 Loading document: ${file.name}`);
+
+    try {
+      if (file.type === 'application/pdf') {
+        // For PDF, we'll send the text content (server-side PDF parsing would need a library)
+        const text = await file.text();
+        setDocumentContent(text);
+        addLog(`✓ Document loaded: ${file.name} (${text.length} chars)`);
+      } else {
+        // Text, markdown, etc.
+        const text = await file.text();
+        setDocumentContent(text);
+        addLog(`✓ Document loaded: ${file.name} (${text.length} chars)`);
+      }
+    } catch (err) {
+      addLog(`✗ Failed to load document: ${err}`);
+    }
+  }, [addLog]);
+
   // ─── Command Palette Commands ────────────────────────────────────────────
   const commands = [
     { id: 'start', label: 'Start Research', shortcut: 'Enter', icon: <Play className="w-4 h-4" />, action: () => runResearch() },
@@ -208,7 +253,14 @@ export default function ResearchDashboard() {
 
     try {
       const researchMode = depth === 'academic' ? 'academic' : 'research';
-      const request: ResearchRequest = { query, depth, mode: researchMode as any };
+      const request: ResearchRequest = {
+        query,
+        depth,
+        mode: researchMode as any,
+        template: selectedTemplate,
+        maxIterations,
+        documentContent: documentContent || undefined,
+      };
 
       const response = await fetch('/api/research', {
         method: 'POST',
@@ -395,6 +447,27 @@ export default function ResearchDashboard() {
         if (event.message) addLog(`📊 ${event.message}`);
         break;
 
+      case 'iteration':
+        if (event.iteration !== undefined) setCurrentIteration(event.iteration);
+        if (event.maxIterations !== undefined) setMaxIterations(event.maxIterations);
+        addLog(`🔄 Refinement iteration ${event.iteration}/${event.maxIterations}`);
+        break;
+
+      case 'verification':
+        if (event.data) {
+          setVerificationResult(typeof event.data === 'string' ? event.data : JSON.stringify(event.data));
+          addLog('🛡️ Source verification complete');
+        }
+        break;
+
+      case 'structured_data':
+        addLog('📋 Structured data extracted');
+        break;
+
+      case 'knowledge_update':
+        addLog(`🧠 Knowledge graph updated: ${event.data?.nodeCount || 0} nodes`);
+        break;
+
       case 'followup_ready':
         setShowFollowUp(true);
         break;
@@ -429,11 +502,11 @@ export default function ResearchDashboard() {
   };
 
   const completedCount = agents.filter((a) => a.status === 'completed').length;
-  const totalCount = 5;
+  const totalCount = DEFAULT_AGENTS.length;
   const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
 
   // Pipeline step labels
-  const PIPELINE_STEPS = ['Search & Crawl', 'Orchestrator', 'Extract & Analyze', 'Synthesize', 'Quality Review'];
+  const PIPELINE_STEPS = ['Search & Crawl', 'Orchestrator', 'Extract & Analyze', 'Synthesize & Refine', 'Verify & Review'];
 
   return (
     <div className="relative min-h-screen bg-[#030806] text-gray-200 overflow-x-hidden">
@@ -615,6 +688,69 @@ export default function ResearchDashboard() {
               </div>
             )}
 
+            {/* Template Selector */}
+            <div className="mb-5">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] text-gray-500 uppercase tracking-wider">Research Template</label>
+                <button onClick={() => setShowTemplates(!showTemplates)} className="text-[10px] text-gray-500 hover:text-green-400 transition-colors">
+                  {showTemplates ? 'Hide' : 'Show all'}
+                </button>
+              </div>
+              <div className={`grid gap-2 ${showTemplates ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3'}`}>
+                {TEMPLATE_OPTIONS.filter(t => showTemplates || ['general', 'market_analysis', 'literature_review'].includes(t.id)).map((tmpl) => (
+                  <button
+                    key={tmpl.id}
+                    onClick={() => setSelectedTemplate(tmpl.id)}
+                    disabled={isRunning}
+                    className={`flex items-center gap-2 p-3 rounded-xl border text-left transition-all ${
+                      selectedTemplate === tmpl.id
+                        ? 'border-green-500/30 bg-green-500/[0.08]'
+                        : 'border-white/[0.04] bg-white/[0.02] hover:border-white/[0.08]'
+                    }`}
+                  >
+                    <span className="text-lg">{tmpl.icon}</span>
+                    <div>
+                      <div className={`text-xs font-medium ${selectedTemplate === tmpl.id ? 'text-green-300' : 'text-gray-300'}`}>{tmpl.name}</div>
+                      <div className="text-[9px] text-gray-500">{tmpl.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Document Upload (RAG) */}
+            <div className="mb-5">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wider mb-2 block">Document Context (Optional)</label>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex items-center gap-3 p-3 rounded-xl border border-dashed cursor-pointer transition-all ${
+                  documentName ? 'border-green-500/30 bg-green-500/[0.05]' : 'border-white/[0.08] bg-white/[0.02] hover:border-white/[0.15]'
+                }`}
+              >
+                <input ref={fileInputRef} type="file" className="hidden" accept=".txt,.md,.json,.csv,.pdf,.html" onChange={handleDocumentUpload} />
+                {documentName ? (
+                  <>
+                    <FileText className="w-4 h-4 text-green-400" />
+                    <div className="flex-1">
+                      <p className="text-xs text-gray-300">{documentName}</p>
+                      <p className="text-[10px] text-gray-500">{documentContent.length} chars • Click to replace</p>
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); setDocumentContent(''); setDocumentName(''); }} className="text-gray-500 hover:text-red-400">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-gray-500" />
+                    <div>
+                      <p className="text-xs text-gray-400">Upload a document for RAG context</p>
+                      <p className="text-[10px] text-gray-500">.txt, .md, .json, .csv, .html — agents will reference this</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Depth Selector */}
             <div className="mb-5">
               <label className="block text-[10px] text-gray-500 uppercase tracking-wider mb-2">Research Depth</label>
@@ -686,6 +822,18 @@ export default function ResearchDashboard() {
                   )}
                 </div>
               ))}
+              {/* Iteration badge */}
+              {currentIteration > 0 && (
+                <div className="ml-2 px-2 py-1 rounded-full bg-amber-500/20 text-amber-400 text-[10px] border border-amber-500/30">
+                  🔄 Iteration {currentIteration}/{maxIterations}
+                </div>
+              )}
+              {/* Document badge */}
+              {documentName && (
+                <div className="ml-1 px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 text-[10px] border border-blue-500/30">
+                  📄 RAG
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -858,6 +1006,19 @@ export default function ResearchDashboard() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+
+                  {/* Verification Results */}
+                  {verificationResult && !isRunning && (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-4 pt-4 border-t border-white/[0.06]">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-sm">🛡️</span>
+                        <span className="text-xs text-gray-400 font-medium">Source Verification</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] text-xs text-gray-400 leading-relaxed max-h-48 overflow-y-auto custom-scrollbar">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{verificationResult}</ReactMarkdown>
+                      </div>
+                    </motion.div>
+                  )}
 
                   {/* Follow-up Section */}
                   {showFollowUp && !isRunning && (

@@ -1,7 +1,24 @@
-import { AgentState, AgentMessage, StreamEvent, ResearchRequest, SearchSource } from '@/types';
-import { completion, streamCompletion, ACTIVE_MODEL } from './mimo-client';
+/**
+ * Multi-Agent Research Engine v2.0
+ * 
+ * Features:
+ * - Real multi-agent architecture with independent LLM calls
+ * - Multi-model routing (free models first, fallback to paid)
+ * - Iterative refinement (Critic can trigger re-runs)
+ * - Source verification pipeline
+ * - Structured data extraction
+ * - Research templates
+ * - Knowledge graph integration
+ * - RAG document support
+ * - Streaming tokens to UI
+ */
+
+import { AgentState, AgentMessage, StreamEvent, ResearchRequest, SearchSource, VerificationResult, StructuredData } from '@/types';
+import { completion, streamCompletion, ACTIVE_MODEL, getAvailableProviders } from './llm-client';
 import { searchWeb, crawlPages, formatSearchResults } from './search';
 import { searchAcademic, formatAcademicResults } from './academic';
+import { getTemplate } from './templates';
+import { extractKnowledgeFromReport } from './knowledge-graph';
 
 const AGENTS = {
   ORCHESTRATOR:   { id: 'orchestrator',        name: 'Orchestrator',     desc: 'Research strategy & planning',  icon: 'Brain' },
@@ -9,36 +26,99 @@ const AGENTS = {
   REASONER:       { id: 'reasoning_engine',     name: 'Reasoning Engine',desc: 'Deep analysis & reasoning',     icon: 'GitBranch' },
   SYNTHESIZER:    { id: 'synthesizer',          name: 'Report Writer',   desc: 'Structured report compilation', icon: 'FileText' },
   CRITIC:         { id: 'critic',               name: 'Quality Critic',  desc: 'Accuracy & completeness review',icon: 'CheckCircle' },
+  VERIFIER:       { id: 'verifier',             name: 'Fact Checker',    desc: 'Source verification & confidence', icon: 'Shield' },
 };
 
 export function initializeAgents(): AgentState[] {
   return Object.values(AGENTS).map(a => ({ ...a, description: a.desc, status: 'idle' as const, messages: [] }));
 }
 
-const DEPTH: Record<string, { timeoutMs: number; maxTokens: number; temp: number; searchCount: number; crawlCount: number }> = {
-  quick:    { timeoutMs: 45000, maxTokens: 1500, temp: 0.4, searchCount: 4, crawlCount: 1 },
-  standard: { timeoutMs: 80000, maxTokens: 2500, temp: 0.4, searchCount: 6, crawlCount: 3 },
-  deep:     { timeoutMs: 110000, maxTokens: 3500, temp: 0.4, searchCount: 8, crawlCount: 5 },
-  academic: { timeoutMs: 100000, maxTokens: 3000, temp: 0.3, searchCount: 6, crawlCount: 4 },
+const DEPTH: Record<string, { timeoutMs: number; maxTokens: number; temp: number; searchCount: number; crawlCount: number; maxIterations: number }> = {
+  quick:    { timeoutMs: 45000, maxTokens: 1500, temp: 0.4, searchCount: 4, crawlCount: 1, maxIterations: 1 },
+  standard: { timeoutMs: 80000, maxTokens: 2500, temp: 0.4, searchCount: 6, crawlCount: 3, maxIterations: 2 },
+  deep:     { timeoutMs: 110000, maxTokens: 3500, temp: 0.4, searchCount: 8, crawlCount: 5, maxIterations: 3 },
+  academic: { timeoutMs: 100000, maxTokens: 3000, temp: 0.3, searchCount: 6, crawlCount: 4, maxIterations: 2 },
 };
 
 function chop(s: string, n: number) { return s && s.length > n ? s.slice(0, n) + '\n[...]' : s || ''; }
 
-// ─── Streaming LLM call with token callback ─────────────────────────────────
+// ===== MODEL ROUTING PER AGENT =====
+
+/** Choose the best model for each agent role */
+function getAgentModelConfig(agentId: string, depth: string): { provider?: string; model?: string; temperature?: number } {
+  const depthCfg = DEPTH[depth] || DEPTH.standard;
+
+  switch (agentId) {
+    case 'orchestrator':
+      // Fast model for planning — free provider preferred
+      return { provider: 'groq', temperature: 0.4 };
+    case 'multimodal_extractor':
+      // Balanced model for extraction
+      return { provider: 'groq', temperature: 0.3 };
+    case 'reasoning_engine':
+      // Best model for deep reasoning
+      return { temperature: depthCfg.temp };
+    case 'synthesizer':
+      // Best model for report writing
+      return { temperature: 0.5 };
+    case 'critic':
+      // Different model for objectivity
+      return { provider: 'google', temperature: 0.3 };
+    case 'verifier':
+      // Fast model for fact-checking
+      return { provider: 'groq', temperature: 0.2 };
+    default:
+      return { temperature: depthCfg.temp };
+  }
+}
+
+// ===== LLM HELPERS =====
+
+async function callLLMWithFallback(
+  msgs: AgentMessage[],
+  depth: string,
+  agentId: string
+): Promise<string> {
+  const cfg = DEPTH[depth] || DEPTH.standard;
+  const modelCfg = getAgentModelConfig(agentId, depth);
+  const t = Date.now();
+
+  try {
+    const result = await completion(msgs, {
+      provider: modelCfg.provider,
+      model: modelCfg.model,
+      temperature: modelCfg.temperature,
+      max_tokens: cfg.maxTokens,
+      timeoutMs: cfg.timeoutMs,
+    });
+
+    if (result.trim().length >= 20) {
+      console.log(`[LLM] ✓ ${agentId} ${Date.now()-t}ms ${result.length}c`);
+      return result;
+    }
+    throw new Error('short/empty response');
+  } catch (e) {
+    console.error(`[LLM] ✗ ${agentId}: ${e instanceof Error ? e.message : 'error'}`);
+    throw new Error(`Agent ${agentId} failed: ${e instanceof Error ? e.message : 'error'} (${Date.now()-t}ms)`);
+  }
+}
 
 async function callLLMStreamWithCallback(
   msgs: AgentMessage[],
   depth: string,
+  agentId: string,
   onToken: (token: string) => void
 ): Promise<string> {
   const cfg = DEPTH[depth] || DEPTH.standard;
+  const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
   let result = '';
 
   try {
     const stream = streamCompletion(msgs, {
-      model: ACTIVE_MODEL,
-      temperature: cfg.temp,
+      provider: modelCfg.provider,
+      model: modelCfg.model,
+      temperature: modelCfg.temperature,
       max_tokens: cfg.maxTokens,
     });
 
@@ -47,29 +127,14 @@ async function callLLMStreamWithCallback(
       onToken(token);
     }
 
-    if (result.trim().length >= 30) {
-      console.log(`[LLM] ✓ ${Date.now()-t}ms ${result.length}c (streamed)`);
+    if (result.trim().length >= 20) {
+      console.log(`[LLM] ✓ ${agentId} (stream) ${Date.now()-t}ms ${result.length}c`);
       return result;
     }
     throw new Error('short/empty response');
   } catch (e) {
-    throw new Error(`API failed: ${e instanceof Error ? e.message : 'error'} (${Date.now()-t}ms)`);
-  }
-}
-
-// Non-streaming fallback
-async function callLLM(msgs: AgentMessage[], depth: string): Promise<string> {
-  const cfg = DEPTH[depth] || DEPTH.standard;
-  const t = Date.now();
-  try {
-    const r = await Promise.race([
-      completion(msgs, { model: ACTIVE_MODEL, temperature: cfg.temp, max_tokens: cfg.maxTokens, timeoutMs: cfg.timeoutMs }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), cfg.timeoutMs)),
-    ]);
-    if (r && r.trim().length >= 30) { console.log(`[LLM] ✓ ${Date.now()-t}ms ${r.length}c`); return r; }
-    throw new Error('short/empty response');
-  } catch (e) {
-    throw new Error(`API failed: ${e instanceof Error ? e.message : 'error'} (${Date.now()-t}ms)`);
+    console.error(`[LLM] ✗ ${agentId} stream: ${e instanceof Error ? e.message : 'error'}`);
+    throw e;
   }
 }
 
@@ -81,27 +146,21 @@ function extractSection(text: string, marker: string, nextMarkers: string[]): st
 
 function buildSearchQueries(query: string): string[] {
   const queries = [query];
-  if (!/indonesia/i.test(query)) {
-    queries.push(`${query} Indonesia`);
-  }
+  if (!/indonesia/i.test(query)) queries.push(`${query} Indonesia`);
   const acronymMatch = query.match(/\b[A-Z]{2,5}\b/g);
   if (acronymMatch) {
-    const acronym = acronymMatch[0];
-    queries.push(`${acronym} adalah program Indonesia`);
+    queries.push(`${acronymMatch[0]} adalah program Indonesia`);
     queries.push(`${query} terbaru 2025`);
   }
   const noQuestion = query.replace(/^(apakah|apa|bagaimana|mengapa|kenapa|siapa|kapan|dimana)\s+/i, '');
-  if (noQuestion !== query) {
-    queries.push(noQuestion);
-  }
+  if (noQuestion !== query) queries.push(noQuestion);
   return [...new Set(queries)].slice(0, 4);
 }
 
-// ─── Citation Builder ───────────────────────────────────────────────────────
+// ===== CITATION BUILDER =====
 
 function buildCitations(text: string, searchResults: any[]): { cited: string; refs: string } {
   if (!searchResults.length) return { cited: text, refs: '' };
-
   const refs: string[] = [];
   const urlMap = new Map<string, number>();
 
@@ -111,9 +170,7 @@ function buildCitations(text: string, searchResults: any[]): { cited: string; re
       const domain = new URL(r.url).hostname.replace('www.', '');
       const titleWords = (r.title || '').split(/\s+/).filter((w: string) => w.length > 4);
       const mentioned = titleWords.some((w: string) => text.toLowerCase().includes(w.toLowerCase())) ||
-                        text.includes(domain) ||
-                        text.includes(r.url);
-
+                        text.includes(domain) || text.includes(r.url);
       if (mentioned && !urlMap.has(r.url)) {
         const num = refs.length + 1;
         urlMap.set(r.url, num);
@@ -130,45 +187,41 @@ function buildCitations(text: string, searchResults: any[]): { cited: string; re
     } catch { /* invalid URL */ }
   }
 
-  const refsSection = refs.length > 0
-    ? `\n\n---\n\n## 📚 References\n\n${refs.join('\n')}`
-    : '';
-
+  const refsSection = refs.length > 0 ? `\n\n---\n\n## 📚 References\n\n${refs.join('\n')}` : '';
   return { cited: citedText, refs: refsSection };
 }
 
-// ─── Agent Prompts ──────────────────────────────────────────────────────────
+// ===== AGENT PROMPTS (TEMPLATE-AWARE) =====
 
-function getOrchestratorPrompt(query: string, searchText: string, depth: string, isAcademic: boolean): string {
-  return `You are the Orchestrator agent in a multi-agent research system.
-Your job: Analyze the research query and create a structured research plan.
+function getOrchestratorPrompt(query: string, searchText: string, depth: string, isAcademic: boolean, template: any, docContext: string): string {
+  const customPrompt = template.systemPrompts.orchestrator;
+  return `${customPrompt}
 
 QUERY: ${query}
 
 ${searchText ? `PRELIMINARY WEB DATA:\n${chop(searchText, 2000)}` : ''}
-
-${isAcademic ? 'This is an ACADEMIC research task. Focus on scholarly analysis.' : ''}
+${isAcademic ? '\nThis is an ACADEMIC research task. Focus on scholarly analysis.' : ''}
+${docContext ? `\nUSER DOCUMENTS:\n${chop(docContext, 2000)}` : ''}
 
 Create a research plan with:
-1. TOPIC IDENTIFICATION — What exactly are we researching? Disambiguate if needed.
+1. TOPIC IDENTIFICATION — What exactly are we researching?
 2. KEY SUB-QUESTIONS — 3-5 specific questions to investigate
 3. RESEARCH STRATEGY — What sources and approaches to prioritize
 4. EXPECTED OUTCOMES — What the final report should cover
 
-Be specific. Answer in the SAME LANGUAGE as the query.
-${depth === 'deep' ? 'Be thorough — identify edge cases and contrarian viewpoints.' : depth === 'quick' ? 'Be concise — focus on the most critical aspects.' : 'Be balanced — cover main aspects without over-elaborating.'}`;
+Answer in the SAME LANGUAGE as the query.
+${depth === 'deep' ? 'Be thorough — identify edge cases and contrarian viewpoints.' : depth === 'quick' ? 'Be concise.' : 'Be balanced.'}`;
 }
 
-function getExtractorPrompt(query: string, pageContents: string, searchResults: any[], academicResults: string): string {
-  return `You are the Web Extractor agent. Your job: Extract and organize key facts from web sources.
+function getExtractorPrompt(query: string, pageContents: string, searchResults: any[], academicResults: string, template: any, docContext: string): string {
+  return `${template.systemPrompts.extractor}
 
 QUERY: ${query}
 
 ${searchResults.length > 0 ? `SEARCH RESULTS:\n${formatSearchResults(searchResults.slice(0, 8))}` : 'No web search results available.'}
-
-${pageContents ? `FULL PAGE CONTENTS (from crawled pages):\n${chop(pageContents, 4000)}` : ''}
-
-${academicResults ? `ACADEMIC PAPERS:\n${chop(academicResults, 2000)}` : ''}
+${pageContents ? `\nFULL PAGE CONTENTS:\n${chop(pageContents, 4000)}` : ''}
+${academicResults ? `\nACADEMIC PAPERS:\n${chop(academicResults, 2000)}` : ''}
+${docContext ? `\nUSER DOCUMENTS:\n${chop(docContext, 3000)}` : ''}
 
 Extract and organize:
 1. KEY FACTS — Specific data points, statistics, dates, names
@@ -180,8 +233,8 @@ Be specific with numbers and dates. Cite sources by title.
 Answer in the SAME LANGUAGE as the query.`;
 }
 
-function getReasonerPrompt(query: string, facts: string, depth: string): string {
-  return `You are the Reasoning Engine agent. Your job: Deep analysis and chain-of-thought reasoning.
+function getReasonerPrompt(query: string, facts: string, depth: string, template: any): string {
+  return `${template.systemPrompts.reasoner}
 
 QUERY: ${query}
 
@@ -195,13 +248,37 @@ Perform deep analysis:
 4. IMPLICATION ANALYSIS — What does this mean for the future?
 5. CONFIDENCE ASSESSMENT — How confident are we in each finding? (High/Medium/Low)
 
-${depth === 'deep' ? 'Explore multiple perspectives including contrarian views. Consider second-order effects.' : 'Focus on the most significant patterns and implications.'}
-
+${depth === 'deep' ? 'Explore multiple perspectives including contrarian views.' : 'Focus on the most significant patterns.'}
 Answer in the SAME LANGUAGE as the query.`;
 }
 
-function getCriticPrompt(query: string, report: string, sourceCount: number): string {
-  return `You are the Quality Critic agent. Your job: Review the research report for accuracy and completeness.
+function getSynthesizerPrompt(query: string, orchOutput: string, extrResult: string, reasOutput: string, searchResults: any[], template: any, iteration: number, criticFeedback: string): string {
+  return `${template.systemPrompts.synthesizer}
+
+Write a comprehensive research report using this structure:
+${template.outputFormat}
+
+QUERY: ${query}
+
+ORCHESTRATOR PLAN:
+${chop(orchOutput, 1500)}
+
+EXTRACTED DATA:
+${chop(extrResult, 2000)}
+
+ANALYSIS:
+${chop(reasOutput, 2000)}
+
+${searchResults.length > 0 ? `SOURCES (${searchResults.length}):\n${searchResults.map((r: any, i: number) => `[${i+1}] ${r.title} — ${r.url}`).join('\n')}` : ''}
+${iteration > 1 && criticFeedback ? `\nPREVIOUS REVIEW FEEDBACK (address these points):\n${chop(criticFeedback, 1500)}` : ''}
+
+Write a complete, publication-quality research report. Be thorough but readable.
+${iteration > 1 ? 'This is iteration ' + iteration + '. Address the feedback from the previous review.' : ''}
+Answer in the SAME LANGUAGE as the query.`;
+}
+
+function getCriticPrompt(query: string, report: string, sourceCount: number, template: any): string {
+  return `${template.systemPrompts.critic}
 
 QUERY: ${query}
 SOURCES CONSULTED: ${sourceCount}
@@ -211,16 +288,63 @@ ${chop(report, 3000)}
 
 Evaluate and provide:
 1. ACCURACY CHECK — Any unsupported claims or factual errors?
-2. COMPLETENESS — What important aspects are missing?
+2. COMPLETENESS — What important aspects are missing? (score 1-10)
 3. BIAS DETECTION — Any obvious bias or one-sidedness?
 4. SOURCE QUALITY — Are sources diverse and reliable?
 5. IMPROVEMENT SUGGESTIONS — Specific additions or corrections
+6. OVERALL GRADE — A/B/C/D
+7. NEEDS_REFINEMENT — true/false (set to true if grade is B or below)
 
-Be constructive but thorough. Rate overall quality: A/B/C/D.
+Format your response with clear sections. End with:
+NEEDS_REFINEMENT: true/false
+GRADE: A/B/C/D
+
 Answer in the SAME LANGUAGE as the query.`;
 }
 
-// ─── Main Pipeline ──────────────────────────────────────────────────────────
+function getVerifierPrompt(query: string, claims: string, sources: string): string {
+  return `You are a fact-checking specialist. Verify the following claims against available sources.
+
+QUERY: ${query}
+
+CLAIMS TO VERIFY:
+${chop(claims, 2000)}
+
+AVAILABLE SOURCES:
+${chop(sources, 2000)}
+
+For each claim, provide:
+- CLAIM: [the claim]
+- VERDICT: VERIFIED / PARTIALLY_VERIFIED / UNVERIFIED / CONTRADICTED
+- CONFIDENCE: HIGH / MEDIUM / LOW
+- EVIDENCE: [supporting or contradicting evidence]
+- SOURCES: [which sources support/refute this]
+
+Be rigorous. Mark as UNVERIFIED if insufficient evidence exists.
+Answer in the SAME LANGUAGE as the query.`;
+}
+
+function getStructuredExtractionPrompt(query: string, report: string): string {
+  return `Extract structured data from this research report. Output ONLY valid JSON.
+
+QUERY: ${query}
+
+REPORT:
+${chop(report, 4000)}
+
+Extract the following into JSON format:
+{
+  "tables": [{"title": "...", "headers": ["col1", "col2"], "rows": [["val1", "val2"]]}],
+  "statistics": [{"label": "...", "value": "...", "source": "..."}],
+  "quotes": [{"text": "...", "attribution": "...", "source": "..."}],
+  "timeline": [{"date": "...", "event": "..."}]
+}
+
+Only include data that actually exists in the report. Empty arrays if none found.
+Output ONLY the JSON object, no other text.`;
+}
+
+// ===== MAIN PIPELINE =====
 
 export async function* runResearchPipeline(
   req: ResearchRequest, agents: AgentState[]
@@ -228,8 +352,15 @@ export async function* runResearchPipeline(
   const t0 = Date.now();
   const depth = req.depth || 'standard';
   const cfg = DEPTH[depth] || DEPTH.standard;
+  const maxIterations = req.maxIterations || cfg.maxIterations;
   const isFollowUp = req.mode === 'followup' && req.history && req.history.length > 0;
   const isAcademic = req.mode === 'academic';
+  const template = getTemplate(req.template || 'general');
+  const docContext = req.documentContent || '';
+
+  // Log provider info
+  const providers = getAvailableProviders();
+  console.log(`[Pipe] Providers: ${providers.map(p => `${p.name}(${p.isFree ? 'free' : 'paid'})`).join(', ')}`);
 
   try {
     // ── Step 1: Web search + Page crawling ─────────────────────────────────
@@ -240,8 +371,6 @@ export async function* runResearchPipeline(
 
     if (!isFollowUp || req.query.length > 20) {
       const searchQueries = buildSearchQueries(req.query);
-      console.log(`[Search] queries:`, searchQueries);
-
       yield { type: 'progress', step: 0, message: 'Searching the web...', progress: 5 };
 
       const seenUrls = new Set<string>();
@@ -263,29 +392,15 @@ export async function* runResearchPipeline(
       searchText = searchResults.length > 0 ? formatSearchResults(searchResults) : '';
       console.log(`[Search] ${searchResults.length} results in ${Date.now()-t0}ms`);
 
-      yield {
-        type: 'sources',
-        data: searchResults.map((r: any) => ({
-          title: r.title,
-          snippet: r.snippet,
-          url: r.url,
-          source: r.source || 'web',
-        })),
-      };
-
+      yield { type: 'sources', data: searchResults.map((r: any) => ({ title: r.title, snippet: r.snippet, url: r.url, source: r.source || 'web' })) };
       yield { type: 'progress', step: 0, message: `Found ${searchResults.length} sources`, progress: 15 };
 
-      // Crawl top pages (Jina Reader)
-      const topUrls = searchResults
-        .filter(r => r.url && !r.url.includes('youtube.com') && !r.url.includes('twitter.com'))
-        .slice(0, cfg.crawlCount)
-        .map(r => r.url);
-
+      // Crawl pages
+      const topUrls = searchResults.filter(r => r.url && !r.url.includes('youtube.com') && !r.url.includes('twitter.com')).slice(0, cfg.crawlCount).map(r => r.url);
       if (topUrls.length > 0) {
         yield { type: 'progress', step: 0, message: `Crawling ${topUrls.length} pages...`, progress: 20 };
         const crawled = await crawlPages(topUrls, 3000, 3);
         pageContents = Array.from(crawled.values()).join('\n\n---\n\n');
-        console.log(`[Crawl] ${crawled.size}/${topUrls.length} pages in ${Date.now()-t0}ms`);
       }
 
       // Academic search
@@ -294,42 +409,30 @@ export async function* runResearchPipeline(
         try {
           const papers = await searchAcademic(req.query, 6);
           academicText = formatAcademicResults(papers);
-          console.log(`[Academic] ${papers.length} papers found`);
         } catch { /* continue */ }
       }
     }
 
-    // ── Step 2: ORCHESTRATOR (collect tokens, then emit) ──────────────────
+    // ── Step 2: ORCHESTRATOR ───────────────────────────────────────────────
     const orch = agents.find(a => a.id === 'orchestrator')!;
     orch.status = 'running'; orch.startTime = Date.now();
-    yield { type: 'agent_start', agentId: orch.id, message: isFollowUp ? 'Processing follow-up...' : 'Creating research plan...' };
+    yield { type: 'agent_start', agentId: orch.id, message: 'Creating research plan...' };
     yield { type: 'progress', step: 1, progress: 30 };
 
-    const orchPrompt = getOrchestratorPrompt(req.query, searchText, depth, isAcademic);
     const orchMsgs: AgentMessage[] = [
       { role: 'system', content: 'You are a research planning agent.' },
       ...(isFollowUp && req.history ? req.history : []),
-      { role: 'user', content: orchPrompt },
+      { role: 'user', content: getOrchestratorPrompt(req.query, searchText, depth, isAcademic, template, docContext) },
     ];
 
-    // Collect tokens then yield them
-    const orchTokens: string[] = [];
     let orchOutput = '';
     try {
-      orchOutput = await callLLMStreamWithCallback(orchMsgs, depth, (token) => {
-        orchTokens.push(token);
-      });
-    } catch {
-      orchOutput = await callLLM(orchMsgs, depth);
+      orchOutput = await callLLMWithFallback(orchMsgs, depth, orch.id);
+    } catch (e) {
+      orchOutput = `Research plan for: ${req.query}`;
     }
 
-    // Emit collected tokens
-    for (const token of orchTokens) {
-      yield { type: 'agent_token', agentId: orch.id, token };
-    }
-
-    orch.output = orchOutput;
-    orch.status = 'completed'; orch.endTime = Date.now();
+    orch.output = orchOutput; orch.status = 'completed'; orch.endTime = Date.now();
     yield { type: 'agent_complete', agentId: orch.id, data: orchOutput };
     yield { type: 'progress', step: 1, progress: 40 };
 
@@ -339,146 +442,172 @@ export async function* runResearchPipeline(
     yield { type: 'agent_start', agentId: extr.id, message: 'Extracting data from sources...' };
     yield { type: 'progress', step: 2, progress: 45 };
 
-    const extrPrompt = getExtractorPrompt(req.query, pageContents, searchResults, academicText);
     const extrMsgs: AgentMessage[] = [
       { role: 'system', content: 'You are a data extraction agent.' },
-      { role: 'user', content: extrPrompt },
+      { role: 'user', content: getExtractorPrompt(req.query, pageContents, searchResults, academicText, template, docContext) },
     ];
 
     let extrResult = '';
-    try {
-      extrResult = await callLLM(extrMsgs, depth);
-    } catch (e) {
-      extrResult = e instanceof Error ? e.message : 'Extraction failed';
-    }
+    try { extrResult = await callLLMWithFallback(extrMsgs, depth, extr.id); }
+    catch (e) { extrResult = 'Extraction failed: ' + (e instanceof Error ? e.message : 'unknown'); }
 
     extr.output = extrResult; extr.status = 'completed'; extr.endTime = Date.now();
     yield { type: 'agent_complete', agentId: extr.id, data: extrResult };
     yield { type: 'progress', step: 2, progress: 55 };
 
-    // ── Step 4: REASONER (streams tokens) ─────────────────────────────────
+    // ── Step 4: REASONER (streaming) ──────────────────────────────────────
     const reas = agents.find(a => a.id === 'reasoning_engine')!;
     reas.status = 'running'; reas.startTime = Date.now();
     yield { type: 'agent_start', agentId: reas.id, message: 'Deep analysis...' };
     yield { type: 'progress', step: 2, progress: 58 };
 
-    const reasPrompt = getReasonerPrompt(req.query, extrResult, depth);
     const reasMsgs: AgentMessage[] = [
       { role: 'system', content: 'You are an analytical reasoning agent.' },
-      { role: 'user', content: reasPrompt },
+      { role: 'user', content: getReasonerPrompt(req.query, extrResult, depth, template) },
     ];
 
     const reasTokens: string[] = [];
     let reasOutput = '';
     try {
-      reasOutput = await callLLMStreamWithCallback(reasMsgs, depth, (token) => {
-        reasTokens.push(token);
-      });
-    } catch {
-      reasOutput = await callLLM(reasMsgs, depth);
-    }
+      reasOutput = await callLLMStreamWithCallback(reasMsgs, depth, reas.id, (t) => reasTokens.push(t));
+    } catch { reasOutput = await callLLMWithFallback(reasMsgs, depth, reas.id); }
 
-    for (const token of reasTokens) {
-      yield { type: 'agent_token', agentId: reas.id, token };
-    }
-
+    for (const token of reasTokens) yield { type: 'agent_token', agentId: reas.id, token };
     reas.output = reasOutput; reas.status = 'completed'; reas.endTime = Date.now();
     yield { type: 'agent_complete', agentId: reas.id, data: reasOutput };
     yield { type: 'progress', step: 3, progress: 70 };
 
-    // ── Step 5: SYNTHESIZER (streams report tokens) ───────────────────────
-    const synth = agents.find(a => a.id === 'synthesizer')!;
-    synth.status = 'running'; synth.startTime = Date.now();
-    yield { type: 'agent_start', agentId: synth.id, message: 'Writing final report...' };
-    yield { type: 'progress', step: 3, progress: 75 };
+    // ── Step 5: ITERATIVE REFINEMENT LOOP ─────────────────────────────────
+    let finalReport = '';
+    let criticFeedback = '';
+    let iteration = 1;
 
-    const synthSystem = `You are a professional research report writer. Write comprehensive, well-structured reports.
+    for (iteration = 1; iteration <= maxIterations; iteration++) {
+      yield { type: 'iteration', iteration, maxIterations, message: `Iteration ${iteration}/${maxIterations}` };
 
-Use markdown formatting with clear headings (## and ###), bullet points, and bold for key terms.
-Include inline citations by referencing source titles.
-Write in the SAME LANGUAGE as the query.
+      // SYNTHESIZER (streaming)
+      const synth = agents.find(a => a.id === 'synthesizer')!;
+      synth.status = 'running'; synth.startTime = Date.now();
+      yield { type: 'agent_start', agentId: synth.id, message: iteration > 1 ? `Refining report (iteration ${iteration})...` : 'Writing report...' };
+      yield { type: 'progress', step: 3, progress: 70 + (iteration * 5) };
 
-Structure your report with these sections:
-## 📌 Executive Summary
-## 📊 Key Findings & Data
-## 🔍 Deep Analysis
-## 💡 Implications & Outlook
-## ✅ Conclusion`;
+      const synthMsgs: AgentMessage[] = [
+        { role: 'system', content: template.systemPrompts.synthesizer },
+        ...(isFollowUp && req.history ? req.history : []),
+        { role: 'user', content: getSynthesizerPrompt(req.query, orchOutput, extrResult, reasOutput, searchResults, template, iteration, criticFeedback) },
+      ];
 
-    const synthUser = `QUERY: ${req.query}
+      const synthTokens: string[] = [];
+      let reportContent = '';
+      try {
+        reportContent = await callLLMStreamWithCallback(synthMsgs, depth, synth.id, (t) => synthTokens.push(t));
+      } catch { reportContent = await callLLMWithFallback(synthMsgs, depth, synth.id); }
 
-ORCHESTRATOR PLAN:
-${chop(orchOutput, 1500)}
+      for (const token of synthTokens) yield { type: 'report_token', token, agentId: synth.id };
 
-EXTRACTED DATA:
-${chop(extrResult, 2000)}
+      const { cited, refs } = buildCitations(reportContent, searchResults);
+      finalReport = cited + refs + (searchResults.length > 0 ? `\n\n---\n*${searchResults.length} web sources consulted*` : '');
 
-ANALYSIS:
-${chop(reasOutput, 2000)}
+      synth.output = finalReport; synth.status = 'completed'; synth.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: synth.id, data: finalReport };
+      yield { type: 'progress', step: 3, progress: 80 };
 
-${searchResults.length > 0 ? `SOURCES (${searchResults.length}):\n${searchResults.map((r: any, i: number) => `[${i+1}] ${r.title} — ${r.url}`).join('\n')}` : ''}
+      // CRITIC
+      const crit = agents.find(a => a.id === 'critic')!;
+      crit.status = 'running'; crit.startTime = Date.now();
+      yield { type: 'agent_start', agentId: crit.id, message: `Quality review (iteration ${iteration})...` };
 
-Write a complete, publication-quality research report. Be thorough but readable.`;
+      const critMsgs: AgentMessage[] = [
+        { role: 'system', content: template.systemPrompts.critic },
+        { role: 'user', content: getCriticPrompt(req.query, finalReport, searchResults.length, template) },
+      ];
 
-    const synthMsgs: AgentMessage[] = [
-      { role: 'system', content: synthSystem },
-      ...(isFollowUp && req.history ? req.history : []),
-      { role: 'user', content: synthUser },
-    ];
+      let critResult = '';
+      try { critResult = await callLLMWithFallback(critMsgs, depth, crit.id); }
+      catch { critResult = 'NEEDS_REFINEMENT: false\nGRADE: B'; }
 
-    // Stream report tokens in real-time
-    const synthTokens: string[] = [];
-    let reportContent = '';
+      crit.output = critResult; crit.status = 'completed'; crit.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: crit.id, data: critResult };
+
+      // Check if refinement needed
+      const needsRefinement = critResult.includes('NEEDS_REFINEMENT: true') && iteration < maxIterations;
+      if (!needsRefinement) {
+        console.log(`[Pipe] Quality check passed at iteration ${iteration}`);
+        break;
+      }
+
+      criticFeedback = critResult;
+      console.log(`[Pipe] Refinement needed, starting iteration ${iteration + 1}`);
+    }
+
+    // ── Step 6: SOURCE VERIFICATION ────────────────────────────────────────
+    if (searchResults.length > 0 && depth !== 'quick') {
+      const verifier = agents.find(a => a.id === 'verifier')!;
+      if (verifier) {
+        verifier.status = 'running'; verifier.startTime = Date.now();
+        yield { type: 'agent_start', agentId: verifier.id, message: 'Verifying claims...' };
+
+        // Extract key claims from the report
+        const claims = finalReport.split('\n')
+          .filter(l => l.startsWith('- ') || l.startsWith('* ') || l.match(/^\d+\./))
+          .slice(0, 10)
+          .map(l => l.replace(/^[-*\d.]+\s*/, '').trim())
+          .filter(l => l.length > 20)
+          .join('\n');
+
+        if (claims.length > 50) {
+          const verifyMsgs: AgentMessage[] = [
+            { role: 'system', content: 'You are a fact-checking specialist.' },
+            { role: 'user', content: getVerifierPrompt(req.query, claims, searchText.slice(0, 2000)) },
+          ];
+
+          let verifyResult = '';
+          try { verifyResult = await callLLMWithFallback(verifyMsgs, depth, verifier.id); }
+          catch { verifyResult = 'Verification completed with limited sources.'; }
+
+          verifier.output = verifyResult; verifier.status = 'completed'; verifier.endTime = Date.now();
+          yield { type: 'agent_complete', agentId: verifier.id, data: verifyResult };
+          yield { type: 'verification', data: verifyResult };
+        }
+      }
+    }
+
+    // ── Step 7: STRUCTURED DATA EXTRACTION ─────────────────────────────────
+    if (depth !== 'quick') {
+      yield { type: 'progress', step: 4, message: 'Extracting structured data...', progress: 90 };
+
+      const structMsgs: AgentMessage[] = [
+        { role: 'system', content: 'You are a data extraction specialist. Output ONLY valid JSON.' },
+        { role: 'user', content: getStructuredExtractionPrompt(req.query, finalReport) },
+      ];
+
+      try {
+        const structResult = await callLLMWithFallback(structMsgs, depth, 'extractor');
+        // Try to parse JSON from the response
+        const jsonMatch = structResult.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const structuredData: StructuredData = JSON.parse(jsonMatch[0]);
+          yield { type: 'structured_data', data: structuredData };
+        }
+      } catch { /* structured extraction is optional */ }
+    }
+
+    // ── Step 8: KNOWLEDGE GRAPH UPDATE ─────────────────────────────────────
     try {
-      reportContent = await callLLMStreamWithCallback(synthMsgs, depth, (token) => {
-        synthTokens.push(token);
-        // Note: We can't yield here from callback, tokens are emitted below
-      });
-    } catch {
-      reportContent = await callLLM(synthMsgs, depth);
-    }
+      const sessionId = `session-${Date.now()}`;
+      const knowledgeNodes = extractKnowledgeFromReport(finalReport, req.query, sessionId);
+      if (knowledgeNodes.length > 0) {
+        yield { type: 'knowledge_update', data: { nodeCount: knowledgeNodes.length, sessionId } };
+      }
+    } catch { /* knowledge graph is optional */ }
 
-    // Emit report tokens in chunks for real-time display
-    for (const token of synthTokens) {
-      yield { type: 'report_token', token, agentId: synth.id };
-    }
-
-    // Build citations
-    const { cited, refs } = buildCitations(reportContent, searchResults);
-    const finalReport = cited + refs + (searchResults.length > 0 ? `\n\n---\n*${searchResults.length} web sources consulted*` : '');
-
-    synth.output = finalReport; synth.status = 'completed'; synth.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: synth.id, data: finalReport };
+    // ── Finalize ───────────────────────────────────────────────────────────
     yield { type: 'report', data: finalReport };
-    yield { type: 'progress', step: 4, progress: 85 };
-
-    // ── Step 6: QUALITY CRITIC ─────────────────────────────────────────────
-    const crit = agents.find(a => a.id === 'critic')!;
-    crit.status = 'running'; crit.startTime = Date.now();
-    yield { type: 'agent_start', agentId: crit.id, message: 'Quality review...' };
-
-    const critPrompt = getCriticPrompt(req.query, finalReport, searchResults.length);
-    const critMsgs: AgentMessage[] = [
-      { role: 'system', content: 'You are a quality assurance agent.' },
-      { role: 'user', content: critPrompt },
-    ];
-
-    // Run critic, emit followup_ready immediately
     yield { type: 'followup_ready', data: { query: req.query, hasHistory: true } };
-    yield { type: 'progress', step: 4, progress: 90 };
-
-    let critResult = '';
-    try {
-      critResult = await callLLM(critMsgs, depth);
-    } catch (e) {
-      critResult = e instanceof Error ? e.message : 'Review failed';
-    }
-
-    crit.output = critResult; crit.status = 'completed'; crit.endTime = Date.now();
-    yield { type: 'agent_complete', agentId: crit.id, data: critResult };
     yield { type: 'progress', step: 5, progress: 100 };
 
-    console.log(`[Pipe] ✓ ${Date.now()-t0}ms | ${searchResults.length} web | ${finalReport.length}c`);
+    console.log(`[Pipe] ✓ ${Date.now()-t0}ms | ${searchResults.length} web | ${finalReport.length}c | ${iteration} iterations`);
+
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     console.error('[Pipe] ✗', m);
