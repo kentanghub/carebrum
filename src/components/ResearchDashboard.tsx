@@ -10,16 +10,22 @@ import TimelineView from './TimelineView';
 import MindMapView from './MindMapView';
 import Logo from './Logo';
 import NeuralBackground from './NeuralBackground';
+import ReportTOC from './ReportTOC';
+import ExportModal from './ExportModal';
+import CommandPalette from './CommandPalette';
+import SkeletonLoader from './SkeletonLoader';
 import {
   Sparkles, Zap, BookOpen, Telescope, Loader2, Download, Terminal, Play, Square,
   ExternalLink, CheckCircle2, BrainCircuit, Code2, FileText, Mic, MicOff,
   History, X, MessageSquare, GitCompare, Clock, Share2, ChevronDown, Network,
+  Copy, Keyboard, GraduationCap, Eye, Search,
 } from 'lucide-react';
 
 const DEPTH_OPTIONS = [
   { value: 'quick', label: 'Quick Scan', desc: 'Overview in ~30s', icon: <Zap className="w-4 h-4" />, color: 'from-blue-500 to-cyan-500' },
   { value: 'standard', label: 'Standard', desc: 'Balanced depth ~2min', icon: <BookOpen className="w-4 h-4" />, color: 'from-emerald-500 to-green-500' },
   { value: 'deep', label: 'Deep Research', desc: 'Thorough analysis ~5min', icon: <Telescope className="w-4 h-4" />, color: 'from-green-500 to-lime-500' },
+  { value: 'academic', label: 'Academic', desc: 'Scholarly papers & citations', icon: <GraduationCap className="w-4 h-4" />, color: 'from-purple-500 to-violet-500' },
 ];
 
 const SAMPLE_QUERIES = [
@@ -46,7 +52,7 @@ const DEFAULT_AGENTS = [
 export default function ResearchDashboard() {
   // ─── Core State ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState('');
-  const [depth, setDepth] = useState<'quick' | 'standard' | 'deep'>('standard');
+  const [depth, setDepth] = useState<'quick' | 'standard' | 'deep' | 'academic'>('standard');
   const [isRunning, setIsRunning] = useState(false);
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [report, setReport] = useState('');
@@ -69,6 +75,21 @@ export default function ResearchDashboard() {
   const recognitionRef = useRef<any>(null);
   const [reportView, setReportView] = useState<'report' | 'timeline' | 'mindmap'>('report');
 
+  // ─── Stream state ────────────────────────────────────────────────────────
+  const [streamingReport, setStreamingReport] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
+  const [pipelineProgress, setPipelineProgress] = useState(0);
+  const [pipelineStep, setPipelineStep] = useState(0);
+
+  // ─── Export & Command Palette ────────────────────────────────────────────
+  const [showExport, setShowExport] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
+  // ─── Reading stats ───────────────────────────────────────────────────────
+  const wordCount = report ? report.split(/\s+/).filter(Boolean).length : 0;
+  const readingTime = Math.max(1, Math.ceil(wordCount / 200));
+
   // ─── Load sessions from localStorage ─────────────────────────────────────
   useEffect(() => {
     try {
@@ -76,6 +97,32 @@ export default function ResearchDashboard() {
       if (saved) setSessions(JSON.parse(saved));
     } catch {}
   }, []);
+
+  // ─── Keyboard shortcuts ──────────────────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+K / Ctrl+K → Command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+      // Escape → Close overlays
+      if (e.key === 'Escape') {
+        if (showCommandPalette) setShowCommandPalette(false);
+        else if (showExport) setShowExport(false);
+        else if (showHistory) setShowHistory(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showCommandPalette, showExport, showHistory]);
+
+  // ─── Auto-scroll report when streaming ───────────────────────────────────
+  useEffect(() => {
+    if (isStreaming && reportRef.current) {
+      reportRef.current.scrollTop = reportRef.current.scrollHeight;
+    }
+  }, [streamingReport, isStreaming]);
 
   const saveSession = useCallback((q: string, r: string, s: SearchSource[]) => {
     const session: ResearchSession = {
@@ -86,6 +133,8 @@ export default function ResearchDashboard() {
       timestamp: Date.now(),
       depth,
       history: [...history, { role: 'user', content: q }, { role: 'assistant', content: r }],
+      wordCount: r.split(/\s+/).filter(Boolean).length,
+      readingTime: Math.max(1, Math.ceil(r.split(/\s+/).filter(Boolean).length / 200)),
     };
     setSessions(prev => {
       const updated = [session, ...prev].slice(0, 50);
@@ -100,29 +149,22 @@ export default function ResearchDashboard() {
       addLog('⚠ Voice input not supported in this browser');
       return;
     }
-
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
       return;
     }
-
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = 'id-ID';
     recognition.continuous = false;
     recognition.interimResults = true;
-
     recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results)
-        .map((r: any) => r[0].transcript)
-        .join('');
+      const transcript = Array.from(event.results).map((r: any) => r[0].transcript).join('');
       setQuery(transcript);
     };
-
     recognition.onend = () => setIsListening(false);
     recognition.onerror = () => setIsListening(false);
-
     recognition.start();
     recognitionRef.current = recognition;
     setIsListening(true);
@@ -133,12 +175,24 @@ export default function ResearchDashboard() {
     setLogs((prev) => [...prev.slice(-100), message]);
   }, []);
 
+  // ─── Command Palette Commands ────────────────────────────────────────────
+  const commands = [
+    { id: 'start', label: 'Start Research', shortcut: 'Enter', icon: <Play className="w-4 h-4" />, action: () => runResearch() },
+    { id: 'stop', label: 'Stop Research', shortcut: 'Esc', icon: <Square className="w-4 h-4" />, action: () => stopResearch() },
+    { id: 'history', label: 'Toggle History', shortcut: '', icon: <History className="w-4 h-4" />, action: () => setShowHistory(!showHistory) },
+    { id: 'export', label: 'Export Report', shortcut: '', icon: <Download className="w-4 h-4" />, action: () => setShowExport(true) },
+    { id: 'copy', label: 'Copy Report', shortcut: '', icon: <Copy className="w-4 h-4" />, action: () => shareReport() },
+    { id: 'voice', label: 'Toggle Voice Input', shortcut: '', icon: <Mic className="w-4 h-4" />, action: () => toggleVoice() },
+  ];
+
   // ─── Main Research Runner ────────────────────────────────────────────────
   const runResearch = async () => {
     if (!query.trim() || isRunning) return;
 
     setIsRunning(true);
     setReport('');
+    setStreamingReport('');
+    setIsStreaming(true);
     setLogs([]);
     setSources([]);
     setAgents(DEFAULT_AGENTS.map(a => ({ ...a, status: 'idle' as const })));
@@ -146,12 +200,15 @@ export default function ResearchDashboard() {
     setShowReport(false);
     setShowFollowUp(false);
     setMode('research');
+    setPipelineProgress(0);
+    setPipelineStep(0);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const request: ResearchRequest = { query, depth };
+      const researchMode = depth === 'academic' ? 'academic' : 'research';
+      const request: ResearchRequest = { query, depth, mode: researchMode as any };
 
       const response = await fetch('/api/research', {
         method: 'POST',
@@ -193,6 +250,7 @@ export default function ResearchDashboard() {
       }
     } finally {
       setIsRunning(false);
+      setIsStreaming(false);
       setActiveAgent(null);
     }
   };
@@ -200,56 +258,46 @@ export default function ResearchDashboard() {
   // ─── Follow-up Runner ────────────────────────────────────────────────────
   const runFollowUp = async () => {
     if (!followUpQuery.trim() || isRunning) return;
-
     const userMsg: AgentMessage = { role: 'user', content: followUpQuery };
     const assistantMsg: AgentMessage = { role: 'assistant', content: report };
     const newHistory = [...history, userMsg, assistantMsg];
-
     setHistory(newHistory);
     setQuery(followUpQuery);
     setFollowUpQuery('');
     setIsRunning(true);
     setReport('');
+    setStreamingReport('');
+    setIsStreaming(true);
     setLogs([]);
     setSources([]);
     setAgents(DEFAULT_AGENTS.map(a => ({ ...a, status: 'idle' as const })));
     setShowReport(false);
     setShowFollowUp(false);
     setMode('followup');
+    setPipelineProgress(0);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const request: ResearchRequest = {
-        query: followUpQuery,
-        depth,
-        mode: 'followup',
-        history: newHistory,
-      };
-
+      const request: ResearchRequest = { query: followUpQuery, depth, mode: 'followup', history: newHistory };
       const response = await fetch('/api/research', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
         signal: controller.signal,
       });
-
       if (!response.ok) throw new Error(`Failed: ${response.status}`);
-
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response body');
-
       const decoder = new TextDecoder();
       let buffer = '';
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
-
         for (const line of lines) {
           if (line.trim() === '' || line.includes('[DONE]')) continue;
           if (line.startsWith('data: ')) {
@@ -264,6 +312,7 @@ export default function ResearchDashboard() {
       if (error instanceof Error) addLog(`✗ Error: ${error.message}`);
     } finally {
       setIsRunning(false);
+      setIsStreaming(false);
       setActiveAgent(null);
     }
   };
@@ -274,7 +323,6 @@ export default function ResearchDashboard() {
     const compareQuery = `Compare and contrast: "${compareA}" vs "${compareB}". Provide a detailed side-by-side analysis covering: 1) Key differences, 2) Pros and cons of each, 3) Use cases where each excels, 4) Final recommendation.`;
     setQuery(compareQuery);
     setMode('compare');
-    // Trigger research with the compare query
     setTimeout(() => runResearch(), 100);
   };
 
@@ -298,6 +346,25 @@ export default function ResearchDashboard() {
         }
         break;
 
+      case 'agent_token':
+        // Stream token to the active agent's output
+        if (event.agentId && event.token) {
+          setAgents(prev => prev.map(a =>
+            a.id === event.agentId
+              ? { ...a, output: (a.output || '') + event.token }
+              : a
+          ));
+        }
+        break;
+
+      case 'report_token':
+        // Stream report tokens in real-time
+        if (event.token) {
+          setStreamingReport(prev => prev + event.token);
+          setShowReport(true);
+        }
+        break;
+
       case 'agent_complete':
         setAgents((prev) => {
           const exists = prev.find((a) => a.id === event.agentId);
@@ -314,12 +381,18 @@ export default function ResearchDashboard() {
 
       case 'report':
         setReport(event.data || '');
+        setStreamingReport(event.data || '');
         setShowReport(true);
+        setIsStreaming(false);
         addLog('✓ Report generated');
-        // Save to history
         setHistory(prev => [...prev, { role: 'user', content: query }, { role: 'assistant', content: event.data || '' }]);
-        // Save session
         saveSession(query, event.data || '', sources);
+        break;
+
+      case 'progress':
+        if (event.progress !== undefined) setPipelineProgress(event.progress);
+        if (event.step !== undefined) setPipelineStep(event.step);
+        if (event.message) addLog(`📊 ${event.message}`);
         break;
 
       case 'followup_ready':
@@ -335,27 +408,7 @@ export default function ResearchDashboard() {
   const stopResearch = () => {
     abortRef.current?.abort();
     setIsRunning(false);
-  };
-
-  const downloadReport = () => {
-    const blob = new Blob([report], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const safeName = query.replace(/[^a-zA-Z0-9\u4e00-\u9fff\s-]/g, '').trim().slice(0, 50) || 'research';
-    a.download = `carebrum-${safeName.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const loadSession = (session: ResearchSession) => {
-    setQuery(session.query);
-    setReport(session.report);
-    setSources(session.sources);
-    setShowReport(true);
-    setShowHistory(false);
-    setHistory(session.history || []);
-    setShowFollowUp(true);
+    setIsStreaming(false);
   };
 
   const shareReport = () => {
@@ -363,9 +416,24 @@ export default function ResearchDashboard() {
     navigator.clipboard.writeText(text).then(() => addLog('✓ Report copied to clipboard'));
   };
 
+  const loadSession = (session: ResearchSession) => {
+    setQuery(session.query);
+    setReport(session.report);
+    setStreamingReport(session.report);
+    setSources(session.sources);
+    setShowReport(true);
+    setShowHistory(false);
+    setHistory(session.history || []);
+    setShowFollowUp(true);
+    setIsStreaming(false);
+  };
+
   const completedCount = agents.filter((a) => a.status === 'completed').length;
   const totalCount = 5;
   const progress = agents.length > 0 ? (completedCount / totalCount) * 100 : 0;
+
+  // Pipeline step labels
+  const PIPELINE_STEPS = ['Search & Crawl', 'Orchestrator', 'Extract & Analyze', 'Synthesize', 'Quality Review'];
 
   return (
     <div className="relative min-h-screen bg-[#030806] text-gray-200 overflow-x-hidden">
@@ -373,15 +441,22 @@ export default function ResearchDashboard() {
 
       {/* Header */}
       <header className="relative z-10 border-b border-white/[0.04] backdrop-blur-xl bg-[#030806]/60">
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Logo size={36} animated />
             <div>
-              <h1 className="font-bold text-lg text-green-400 tracking-tight drop-shadow-sm">Carebrum</h1>
+              <h1 className="font-bold text-lg text-green-400 tracking-tight drop-shadow-sm">Cerebrum</h1>
               <p className="text-[10px] text-gray-400 -mt-0.5 tracking-wide uppercase">Multi-Agent Research System</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowCommandPalette(true)}
+              className="p-2 rounded-lg hover:bg-white/[0.04] text-gray-400 hover:text-white transition-colors"
+              title="Command Palette (⌘K)"
+            >
+              <Keyboard className="w-4 h-4" />
+            </button>
             <button
               onClick={() => setShowHistory(!showHistory)}
               className="p-2 rounded-lg hover:bg-white/[0.04] text-gray-400 hover:text-white transition-colors"
@@ -393,53 +468,60 @@ export default function ResearchDashboard() {
               <Sparkles className="w-3 h-3 text-green-400" />
               Powered by AI
             </span>
-            <a href="https://github.com/kentanghub/carebrum" target="_blank" rel="noopener noreferrer"
-              className="p-2 rounded-lg hover:bg-white/[0.04] text-gray-400 hover:text-white transition-colors">
-              <Code2 className="w-4 h-4" />
-            </a>
           </div>
         </div>
       </header>
 
-      {/* History Sidebar */}
+      {/* History Sidebar — full-screen overlay on mobile */}
       <AnimatePresence>
         {showHistory && (
-          <motion.div
-            initial={{ x: -300, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: -300, opacity: 0 }}
-            className="fixed left-0 top-16 bottom-0 w-80 z-50 bg-[#0a0f0d] border-r border-white/[0.06] p-4 overflow-y-auto"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-gray-300">Research History</h3>
-              <button onClick={() => setShowHistory(false)} className="text-gray-500 hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {sessions.length === 0 ? (
-              <p className="text-xs text-gray-500">No research history yet</p>
-            ) : (
-              <div className="space-y-2">
-                {sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => loadSession(s)}
-                    className="w-full text-left p-3 rounded-lg bg-white/[0.02] border border-white/[0.04] hover:border-green-500/20 hover:bg-white/[0.04] transition-all"
-                  >
-                    <p className="text-xs text-gray-300 line-clamp-2">{s.query}</p>
-                    <p className="text-[10px] text-gray-500 mt-1">
-                      {new Date(s.timestamp).toLocaleDateString()} • {s.depth} • {s.sources?.length || 0} sources
-                    </p>
-                  </button>
-                ))}
+          <>
+            {/* Mobile backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowHistory(false)}
+              className="fixed inset-0 bg-black/50 z-40 sm:hidden"
+            />
+            <motion.div
+              initial={{ x: -300, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -300, opacity: 0 }}
+              className="fixed inset-0 sm:left-0 sm:top-16 sm:bottom-0 sm:w-80 w-full z-50 bg-[#0a0f0d] border-r border-white/[0.06] p-4 overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-gray-300">Research History</h3>
+                <button onClick={() => setShowHistory(false)} className="text-gray-500 hover:text-white p-2">
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-            )}
-          </motion.div>
+              {sessions.length === 0 ? (
+                <p className="text-xs text-gray-500">No research history yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {sessions.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => loadSession(s)}
+                      className="w-full text-left p-3 rounded-lg bg-white/[0.02] border border-white/[0.04] hover:border-green-500/20 hover:bg-white/[0.04] transition-all"
+                    >
+                      <p className="text-xs text-gray-300 line-clamp-2">{s.query}</p>
+                      <p className="text-[10px] text-gray-500 mt-1">
+                        {new Date(s.timestamp).toLocaleDateString()} • {s.depth} • {s.sources?.length || 0} sources
+                        {s.readingTime && ` • ${s.readingTime} min read`}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
 
       {/* Main Content */}
-      <main className="relative z-10 max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
+      <main className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 py-8">
         {/* Input Section */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <div className="glass-strong rounded-2xl p-6 sm:p-8">
@@ -465,22 +547,24 @@ export default function ResearchDashboard() {
 
             {mode === 'research' ? (
               <>
-                {/* Research Input */}
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-gray-400 mb-2">Ask Anything</label>
                   <div className="relative">
                     <textarea
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runResearch(); } }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runResearch(); }
+                        else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runResearch(); }
+                      }}
                       placeholder="Any question, any topic — from global politics to local policy. Try: 'What's the future of AI?'"
-                      className="w-full h-20 sm:h-28 p-4 pr-20 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none"
+                      className="w-full h-24 sm:h-28 p-4 pr-20 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20 resize-none text-sm text-gray-200 placeholder:text-gray-600 transition-all outline-none"
                       disabled={isRunning}
                     />
                     <div className="absolute bottom-3 right-3 flex items-center gap-2">
                       <button
                         onClick={toggleVoice}
-                        className={`p-1.5 rounded-lg transition-all ${
+                        className={`p-2 rounded-lg transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${
                           isListening ? 'bg-red-500/20 text-red-400 animate-pulse' : 'text-gray-600 hover:text-green-400'
                         }`}
                         title="Voice input"
@@ -492,7 +576,6 @@ export default function ResearchDashboard() {
                   </div>
                 </div>
 
-                {/* Quick suggestions */}
                 {!query && !isRunning && (
                   <div className="mb-5">
                     <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Try asking</p>
@@ -508,30 +591,21 @@ export default function ResearchDashboard() {
                 )}
               </>
             ) : (
-              /* Compare Mode */
               <div className="mb-5 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Topic A</label>
-                    <input
-                      value={compareA}
-                      onChange={(e) => setCompareA(e.target.value)}
-                      placeholder="e.g., React"
-                      className="w-full p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-blue-500/50 text-sm text-gray-200 placeholder:text-gray-600 outline-none"
-                    />
+                    <input value={compareA} onChange={(e) => setCompareA(e.target.value)} placeholder="e.g., React"
+                      className="w-full p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-blue-500/50 text-sm text-gray-200 placeholder:text-gray-600 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Topic B</label>
-                    <input
-                      value={compareB}
-                      onChange={(e) => setCompareB(e.target.value)}
-                      placeholder="e.g., Vue.js"
-                      className="w-full p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-blue-500/50 text-sm text-gray-200 placeholder:text-gray-600 outline-none"
-                    />
+                    <input value={compareB} onChange={(e) => setCompareB(e.target.value)} placeholder="e.g., Vue.js"
+                      className="w-full p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] focus:border-blue-500/50 text-sm text-gray-200 placeholder:text-gray-600 outline-none" />
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {COMPARE_SAMPLES.map(([a, b]) => (
+                  {COMPARE_SAMPLES.map(([a]) => (
                     <button key={a} onClick={() => { setCompareA(a.split(' vs ')[0]); setCompareB(a.split(' vs ')[1]); }}
                       className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-gray-400 hover:text-gray-200 transition-all">
                       {a}
@@ -544,12 +618,12 @@ export default function ResearchDashboard() {
             {/* Depth Selector */}
             <div className="mb-5">
               <label className="block text-[10px] text-gray-500 uppercase tracking-wider mb-2">Research Depth</label>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {DEPTH_OPTIONS.map((option) => (
                   <button key={option.value}
                     onClick={() => !isRunning && setDepth(option.value as any)}
                     disabled={isRunning}
-                    className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-300 ${
+                    className={`relative flex flex-col items-center gap-2 p-4 rounded-xl border transition-all duration-300 min-h-[88px] ${
                       depth === option.value
                         ? 'border-green-500/30 bg-green-500/[0.08] shadow-[0_0_20px_rgba(34,197,94,0.1)]'
                         : 'border-white/[0.04] bg-white/[0.02] hover:border-white/[0.08] hover:bg-white/[0.03]'
@@ -572,7 +646,7 @@ export default function ResearchDashboard() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 disabled={mode === 'compare' ? (!compareA.trim() || !compareB.trim()) : !query.trim()}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm transition-all ${
+                className={`flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-base transition-all ${
                   isRunning
                     ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
                     : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/20 hover:shadow-green-500/30'
@@ -583,23 +657,43 @@ export default function ResearchDashboard() {
           </div>
         </motion.div>
 
-        {/* Progress Bar */}
+        {/* ─── Horizontal Pipeline Strip (replaces 3-col pipeline) ─────────── */}
         {isRunning && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mb-6">
-            <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1.5">
+            {/* Progress bar */}
+            <div className="flex items-center justify-between text-[10px] text-gray-500 mb-2">
               <span>Research Progress</span>
               <span>{Math.round(progress)}%</span>
             </div>
-            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden mb-3">
               <motion.div className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-500" animate={{ width: `${progress}%` }} transition={{ duration: 0.5 }} />
+            </div>
+
+            {/* Pipeline step strip */}
+            <div className="flex items-center justify-center gap-1 flex-wrap">
+              {PIPELINE_STEPS.map((step, i) => (
+                <div key={i} className="flex items-center">
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] transition-all ${
+                    i < pipelineStep ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : i === pipelineStep ? 'bg-green-500/20 text-green-400 border border-green-500/30 animate-pulse'
+                    : 'bg-white/[0.02] text-gray-600 border border-white/[0.04]'
+                  }`}>
+                    {i < pipelineStep ? <CheckCircle2 className="w-3 h-3" /> : i === pipelineStep ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="w-3 h-3 rounded-full bg-white/[0.06]" />}
+                    <span>{step}</span>
+                  </div>
+                  {i < PIPELINE_STEPS.length - 1 && (
+                    <div className={`w-4 h-0.5 mx-0.5 ${i < pipelineStep ? 'bg-emerald-500/40' : 'bg-white/[0.04]'}`} />
+                  )}
+                </div>
+              ))}
             </div>
           </motion.div>
         )}
 
-        {/* Three Column Grid */}
+        {/* ─── Two Column Grid: Agents + Report ────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left: Agents + Sources */}
-          <div className="lg:col-span-4 space-y-4 order-2 lg:order-1">
+          {/* Left: Agents + Sources + Logs */}
+          <div className="lg:col-span-4 xl:col-span-3 space-y-4 order-2 lg:order-1">
             <div className="flex items-center gap-2 mb-3">
               <BrainCircuit className="w-4 h-4 text-green-400" />
               <h2 className="text-sm font-semibold text-gray-300">Agent Swarm</h2>
@@ -612,7 +706,7 @@ export default function ResearchDashboard() {
 
             <div className="space-y-3">
               <AnimatePresence mode="popLayout">
-                {agents.length === 0 ? (
+                {agents.length === 0 && !isRunning ? (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-xl p-8 text-center">
                     <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-white/[0.03] flex items-center justify-center">
                       <Sparkles className="w-5 h-5 text-gray-600" />
@@ -620,6 +714,8 @@ export default function ResearchDashboard() {
                     <p className="text-xs text-gray-500">Agents will appear here</p>
                     <p className="text-[10px] text-gray-600 mt-1">Start a research query above</p>
                   </motion.div>
+                ) : agents.length === 0 && isRunning ? (
+                  <SkeletonLoader count={5} />
                 ) : (
                   agents.map((agent, i) => (
                     <AgentNode key={agent.id} agent={agent} isActive={activeAgent === agent.id} index={i} />
@@ -628,38 +724,51 @@ export default function ResearchDashboard() {
               </AnimatePresence>
             </div>
 
-            {/* Sources Panel */}
+            {/* Sources Panel with snippets */}
             {sources.length > 0 && (
               <div className="mt-4">
                 <div className="flex items-center gap-2 mb-2">
                   <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
                   <h3 className="text-[10px] text-gray-500 uppercase tracking-wider">Web Sources ({sources.length})</h3>
                 </div>
-                <div className="glass rounded-xl p-3 max-h-48 overflow-y-auto space-y-2">
+                <div className="glass rounded-xl p-3 max-h-64 overflow-y-auto space-y-2 custom-scrollbar">
                   {sources.map((s, i) => (
                     <a key={i} href={s.url} target="_blank" rel="noopener noreferrer"
-                      className="block p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-all border border-white/[0.03]">
-                      <p className="text-[11px] text-green-400 truncate">{s.title}</p>
-                      <p className="text-[10px] text-gray-500 truncate">{s.url}</p>
+                      className="group block p-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-all border border-white/[0.03] hover:border-green-500/20">
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs mt-0.5">{getSourceEmoji(s.source)}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] text-green-400 truncate group-hover:text-green-300 transition-colors">{s.title}</p>
+                          <p className="text-[10px] text-gray-500 line-clamp-2 mt-0.5 leading-relaxed">{s.snippet}</p>
+                          <p className="text-[9px] text-gray-600 truncate mt-1">{s.url}</p>
+                        </div>
+                      </div>
                     </a>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Logs */}
+            {/* Color-coded Logs */}
             <div className="mt-4">
               <div className="flex items-center gap-2 mb-2">
                 <Terminal className="w-3.5 h-3.5 text-gray-500" />
                 <h3 className="text-[10px] text-gray-500 uppercase tracking-wider">System Logs</h3>
               </div>
-              <div className="glass rounded-xl p-3 h-52 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-1">
+              <div className="glass rounded-xl p-3 h-52 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-0.5 custom-scrollbar">
                 {logs.length === 0 ? (
-                  <span className="text-gray-400">Waiting...</span>
+                  <span className="text-gray-600">Waiting for research...</span>
                 ) : (
                   logs.map((log, i) => (
-                    <div key={i} className="text-gray-200 break-all">
-                      <span className="text-gray-100">{log}</span>
+                    <div key={i} className={`break-all ${
+                      log.startsWith('✓') ? 'text-emerald-400'
+                      : log.startsWith('✗') ? 'text-rose-400'
+                      : log.startsWith('→') ? 'text-blue-400'
+                      : log.startsWith('📊') ? 'text-amber-400'
+                      : log.startsWith('⚠') ? 'text-yellow-400'
+                      : 'text-gray-400'
+                    }`}>
+                      {log}
                     </div>
                   ))
                 )}
@@ -667,84 +776,33 @@ export default function ResearchDashboard() {
             </div>
           </div>
 
-          {/* Center: Pipeline */}
-          <div className="lg:col-span-3 order-3 lg:order-2">
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-sm font-semibold text-gray-300">Pipeline</h2>
-            </div>
-            <div className="glass rounded-xl p-4 min-h-[80px] lg:min-h-[400px] flex flex-col items-center justify-center">
-              {agents.length === 0 ? (
-                <div className="text-center">
-                  <div className="relative w-20 h-20 mx-auto mb-4">
-                    <div className="absolute inset-0 rounded-full bg-green-500/10 animate-pulse" />
-                    <div className="absolute inset-2 rounded-full bg-green-500/5" />
-                    <div className="relative w-full h-full flex items-center justify-center">
-                      <BrainCircuit className="w-8 h-8 text-green-400/50" />
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-500">Research pipeline visualization</p>
-                  <p className="text-[10px] text-gray-600 mt-1">Will show agent connections</p>
-                </div>
-              ) : (
-                <div className="w-full flex flex-row lg:flex-col items-center justify-center gap-0">
-                  {agents.map((agent, i) => (
-                    <div key={agent.id} className="flex items-center">
-                      <div className="flex flex-col items-center">
-                        <motion.div
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          transition={{ delay: i * 0.15 }}
-                          className={`relative w-10 h-10 lg:w-12 lg:h-12 rounded-full flex items-center justify-center ${
-                            agent.status === 'running' ? 'bg-green-500/20 text-green-400 ring-2 ring-green-500/30'
-                              : agent.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400'
-                              : 'bg-white/[0.03] text-gray-600'
-                          }`}>
-                          {agent.status === 'running' && <Loader2 className="w-4 h-4 lg:w-5 lg:h-5 animate-spin" />}
-                          {agent.status === 'completed' && <CheckCircle2 className="w-4 h-4 lg:w-5 lg:h-5" />}
-                          {agent.status === 'idle' && <span className="text-[10px] lg:text-xs font-mono">{i + 1}</span>}
-                        </motion.div>
-                        <span className="text-[9px] lg:text-[10px] text-gray-500 mt-1 text-center max-w-[60px] lg:max-w-[80px] leading-tight">
-                          {agent.name.split(' ')[0]}
-                        </span>
-                      </div>
-                      {i < agents.length - 1 && (
-                        <motion.div initial={{ width: 0, height: 0 }} animate={{ width: 24, height: 2 }}
-                          className={`mx-1 lg:hidden ${agent.status === 'completed' ? 'bg-emerald-500/40' : 'bg-white/[0.04]'}`} />
-                      )}
-                      {i < agents.length - 1 && (
-                        <motion.div initial={{ height: 0 }} animate={{ height: 24 }} transition={{ delay: i * 0.15 + 0.1 }}
-                          className={`w-0.5 my-1 hidden lg:block ${agent.status === 'completed' ? 'bg-emerald-500/40' : 'bg-white/[0.04]'}`} />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right: Report */}
-          <div className="lg:col-span-5 order-1 lg:order-3">
+          {/* Right: Report (wider, 8 cols) */}
+          <div className="lg:col-span-8 xl:col-span-9 order-1 lg:order-2">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-green-400" />
                 <h2 className="text-sm font-semibold text-gray-300">Research Report</h2>
+                {report && (
+                  <span className="text-[10px] text-gray-500 px-2 py-0.5 rounded-full bg-white/[0.03] border border-white/[0.04]">
+                    {wordCount} words • {readingTime} min read
+                  </span>
+                )}
               </div>
               {report && (
                 <div className="flex items-center gap-2">
                   <button onClick={shareReport}
-                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20">
-                    <Share2 className="w-3 h-3" /> Copy
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20 min-h-[44px]">
+                    <Copy className="w-3 h-3" /> Copy
                   </button>
-                  <button onClick={downloadReport}
-                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20">
-                    <Download className="w-3 h-3" /> Download MD
+                  <button onClick={() => setShowExport(true)}
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-green-400 transition-colors px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] hover:border-green-500/20 min-h-[44px]">
+                    <Download className="w-3 h-3" /> Export
                   </button>
                 </div>
               )}
             </div>
-            <div className="glass rounded-xl p-5 min-h-[400px]">
-              {!showReport || !report ? (
+            <div className="glass rounded-xl p-5 min-h-[400px] sm:min-h-[600px]">
+              {!showReport || (!report && !streamingReport) ? (
                 <div className="h-full flex flex-col items-center justify-center text-center py-16">
                   <div className="relative w-20 h-20 mx-auto mb-4">
                     <div className="absolute inset-0 rounded-full bg-green-500/10 animate-pulse" />
@@ -757,37 +815,54 @@ export default function ResearchDashboard() {
                 </div>
               ) : (
                 <>
-                  {/* View Tabs */}
-                  <div className="flex gap-1 mb-4 p-1 rounded-lg bg-white/[0.02] border border-white/[0.04] w-fit">
-                    <button onClick={() => setReportView('report')}
-                      className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'report' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
-                      <FileText className="w-3 h-3 inline mr-1" />Report
-                    </button>
-                    <button onClick={() => setReportView('timeline')}
-                      className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'timeline' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
-                      <Clock className="w-3 h-3 inline mr-1" />Timeline
-                    </button>
-                    <button onClick={() => setReportView('mindmap')}
-                      className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'mindmap' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
-                      <Network className="w-3 h-3 inline mr-1" />Mind Map
-                    </button>
+                  {/* View Tabs + TOC toggle */}
+                  <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+                    <div className="flex gap-1 p-1 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                      <button onClick={() => setReportView('report')}
+                        className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'report' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
+                        <FileText className="w-3 h-3 inline mr-1" />Report
+                      </button>
+                      <button onClick={() => setReportView('timeline')}
+                        className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'timeline' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
+                        <Clock className="w-3 h-3 inline mr-1" />Timeline
+                      </button>
+                      <button onClick={() => setReportView('mindmap')}
+                        className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'mindmap' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
+                        <Network className="w-3 h-3 inline mr-1" />Mind Map
+                      </button>
+                    </div>
                   </div>
 
-                  {reportView === 'report' && (
-                    <div id="report-content" className="prose-invert max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
-                    </div>
-                  )}
-                  {reportView === 'timeline' && <TimelineView report={report} query={query} />}
-                  {reportView === 'mindmap' && <MindMapView report={report} query={query} />}
+                  <AnimatePresence mode="wait">
+                    {reportView === 'report' && (
+                      <motion.div key="report" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+                        {/* TOC */}
+                        <ReportTOC report={report || streamingReport} />
+                        {/* Report content */}
+                        <div ref={reportRef} id="report-content" className="prose-invert max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{isStreaming ? streamingReport : report}</ReactMarkdown>
+                          {isStreaming && (
+                            <span className="inline-block w-2 h-4 bg-green-400 animate-pulse ml-0.5" />
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                    {reportView === 'timeline' && (
+                      <motion.div key="timeline" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                        <TimelineView report={report} query={query} />
+                      </motion.div>
+                    )}
+                    {reportView === 'mindmap' && (
+                      <motion.div key="mindmap" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                        <MindMapView report={report} query={query} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                   {/* Follow-up Section */}
                   {showFollowUp && !isRunning && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="mt-6 pt-4 border-t border-white/[0.06]"
-                    >
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                      className="mt-6 pt-4 border-t border-white/[0.06]">
                       <div className="flex items-center gap-2 mb-3">
                         <MessageSquare className="w-4 h-4 text-green-400" />
                         <span className="text-xs text-gray-400">Ask a follow-up question</span>
@@ -803,7 +878,7 @@ export default function ResearchDashboard() {
                         <button
                           onClick={runFollowUp}
                           disabled={!followUpQuery.trim()}
-                          className="px-4 py-2 rounded-xl bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="px-4 py-2 rounded-xl bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed min-w-[44px] min-h-[44px] flex items-center justify-center"
                         >
                           <Play className="w-4 h-4" />
                         </button>
@@ -817,24 +892,36 @@ export default function ResearchDashboard() {
         </div>
 
         {/* Footer */}
-        <footer className="mt-12 pt-8 border-t border-white/[0.04] text-center">
+        <footer className="mt-16 pt-8 border-t border-white/[0.04] text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Logo size={24} />
-            <span className="text-sm font-semibold text-green-400">Carebrum</span>
+            <span className="text-sm font-semibold text-green-400">Cerebrum</span>
           </div>
           <p className="text-[10px] text-gray-500">Multi-Agent Research System • Powered by AI</p>
-          <div className="flex items-center justify-center gap-4 mt-3">
-            <a href="https://github.com/kentanghub/carebrum" target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-green-400 transition-colors">
-              <Code2 className="w-3 h-3" /> GitHub
-            </a>
-            <a href="https://carebrum.vercel.app" target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-green-400 transition-colors">
-              <ExternalLink className="w-3 h-3" /> Live Demo
-            </a>
-          </div>
+          <p className="text-[10px] text-gray-600 mt-1">
+            <kbd className="px-1 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-[9px]">⌘K</kbd> Command Palette
+            <span className="mx-2">•</span>
+            <kbd className="px-1 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-[9px]">⌘↵</kbd> Start Research
+          </p>
         </footer>
       </main>
+
+      {/* Export Modal */}
+      <ExportModal isOpen={showExport} onClose={() => setShowExport(false)} report={report} query={query} />
+
+      {/* Command Palette */}
+      <CommandPalette isOpen={showCommandPalette} onClose={() => setShowCommandPalette(false)} commands={commands} />
     </div>
   );
+}
+
+function getSourceEmoji(source: string): string {
+  switch (source) {
+    case 'tavily': return '🔍';
+    case 'brave': return '🦁';
+    case 'serper': return '🔎';
+    case 'duckduckgo': return '🦆';
+    case 'jina': return '📄';
+    default: return '🌐';
+  }
 }

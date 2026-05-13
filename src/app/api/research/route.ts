@@ -16,8 +16,10 @@ export async function POST(req: NextRequest) {
     // Log environment status (without exposing secrets)
     const hasBaseUrl = !!process.env.API_BASE_URL;
     const hasApiKey = !!process.env.API_KEY;
+    const hasBrave = !!process.env.BRAVE_API_KEY;
+    const hasTavily = !!process.env.TAVILY_API_KEY;
     const activeModel = process.env.ACTIVE_MODEL || 'not-set';
-    console.log(`[Research API] BaseURL: ${hasBaseUrl}, Key: ${hasApiKey}, Model: ${activeModel}`);
+    console.log(`[Research API] BaseURL: ${hasBaseUrl}, Key: ${hasApiKey}, Brave: ${hasBrave}, Tavily: ${hasTavily}, Model: ${activeModel}`);
 
     const agents = initializeAgents();
     

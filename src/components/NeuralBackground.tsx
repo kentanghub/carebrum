@@ -22,10 +22,29 @@ export default function NeuralBackground() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Respect reduced motion preference
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      // Draw a static subtle gradient instead
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const grad = ctx.createRadialGradient(
+        canvas.width / 2, canvas.height / 2, 0,
+        canvas.width / 2, canvas.height / 2, canvas.width * 0.6
+      );
+      grad.addColorStop(0, 'rgba(34, 197, 94, 0.03)');
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
     let animationId: number;
     let particles: Particle[] = [];
-    const PARTICLE_COUNT = 60;
-    const CONNECTION_DISTANCE = 150;
+    // Reduce particles on mobile for performance
+    const isMobile = window.innerWidth < 768;
+    const PARTICLE_COUNT = isMobile ? 25 : 60;
+    const CONNECTION_DISTANCE = isMobile ? 100 : 150;
     const MOUSE_RADIUS = 200;
     let mouse = { x: -1000, y: -1000 };
 
@@ -153,7 +172,7 @@ export default function NeuralBackground() {
     <canvas
       ref={canvasRef}
       className="fixed inset-0 pointer-events-none"
-      style={{ zIndex: 0 }}
+      style={{ zIndex: 0, contain: 'strict' }}
     />
   );
 }

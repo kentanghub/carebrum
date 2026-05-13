@@ -1,6 +1,7 @@
 /**
- * Multi-source web search — Tavily → Serper → DuckDuckGo fallback chain.
+ * Multi-source web search — Tavily → Brave → Serper → DuckDuckGo fallback chain.
  * Returns structured results with source attribution.
+ * Includes Jina Reader for full-page content extraction.
  */
 
 export interface SearchResult {
@@ -8,11 +9,13 @@ export interface SearchResult {
   snippet: string;
   url: string;
   source: string;
+  score?: number;
+  fullContent?: string;
 }
 
 /**
  * Search the web using the best available source.
- * Priority: Tavily > Serper > DuckDuckGo (free fallback)
+ * Priority: Tavily > Brave > Serper > DuckDuckGo (free fallback)
  */
 export async function searchWeb(query: string, max: number = 6): Promise<SearchResult[]> {
   const queries = buildQueries(query);
@@ -31,12 +34,17 @@ export async function searchWeb(query: string, max: number = 6): Promise<SearchR
       results = await tryTavily(q, needed);
     }
 
-    // 2. Serper (Google results)
+    // 2. Brave Search (free tier: 2000 queries/month)
+    if (!results.length && process.env.BRAVE_API_KEY) {
+      results = await tryBrave(q, needed);
+    }
+
+    // 3. Serper (Google results)
     if (!results.length && process.env.SERPER_API_KEY) {
       results = await trySerper(q, needed);
     }
 
-    // 3. DuckDuckGo (free fallback)
+    // 4. DuckDuckGo (free fallback)
     if (!results.length) {
       results = await tryDuckDuckGo(q, needed);
     }
@@ -51,6 +59,62 @@ export async function searchWeb(query: string, max: number = 6): Promise<SearchR
   }
 
   return allResults.slice(0, max);
+}
+
+/**
+ * Crawl full page content using Jina Reader API (free, no API key needed).
+ * Returns the main text content of the page.
+ */
+export async function crawlPage(url: string, maxChars: number = 5000): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    const res = await fetch(`https://r.jina.ai/${url}`, {
+      headers: {
+        'Accept': 'text/plain',
+        'X-Return-Format': 'text',
+        'X-Timeout': '10',
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) return '';
+    const text = await res.text();
+    // Clean up and truncate
+    const cleaned = text
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return cleaned.slice(0, maxChars);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Batch crawl multiple URLs with concurrency limit.
+ */
+export async function crawlPages(
+  urls: string[],
+  maxChars: number = 3000,
+  concurrency: number = 3
+): Promise<Map<string, string>> {
+  const results = new Map<string, string>();
+
+  // Process in batches
+  for (let i = 0; i < urls.length; i += concurrency) {
+    const batch = urls.slice(i, i + concurrency);
+    const promises = batch.map(async (url) => {
+      const content = await crawlPage(url, maxChars);
+      if (content) results.set(url, content);
+    });
+    await Promise.all(promises);
+  }
+
+  return results;
 }
 
 function buildQueries(query: string): string[] {
@@ -105,6 +169,44 @@ async function tryTavily(query: string, max: number): Promise<SearchResult[]> {
       snippet: r.content || r.snippet || '',
       url: r.url || '',
       source: 'tavily',
+      score: r.score,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ─── Brave Search ────────────────────────────────────────────────────────────
+
+async function tryBrave(query: string, max: number): Promise<SearchResult[]> {
+  const apiKey = process.env.BRAVE_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      count: String(max),
+      text_decorations: 'false',
+      search_lang: 'en',
+    });
+
+    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': apiKey,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.web?.results || []).map((r: any) => ({
+      title: r.title || '',
+      snippet: r.description || '',
+      url: r.url || '',
+      source: 'brave',
+      score: r.meta_url?.confidence ? parseFloat(r.meta_url.confidence) : undefined,
     }));
   } catch {
     return [];
@@ -145,9 +247,22 @@ async function trySerper(query: string, max: number): Promise<SearchResult[]> {
 
 async function tryDuckDuckGo(query: string, max: number): Promise<SearchResult[]> {
   // DuckDuckGo blocks cloud IPs (Vercel, AWS, GCP) with 403
-  // Only attempt from non-serverless environments
-  // On Vercel/serverless, this will always fail — skip gracefully
-  return [];
+  // Try the lite HTML endpoint as last resort
+  try {
+    const params = new URLSearchParams({ q: query, kl: 'us-en' });
+    const res = await fetch(`https://lite.duckduckgo.com/lite/?${params}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!res.ok) return [];
+    const html = await res.text();
+    return parseDDGLite(html, max);
+  } catch {
+    return [];
+  }
 }
 
 function parseDDGLite(html: string, max: number): SearchResult[] {
@@ -158,33 +273,8 @@ function parseDDGLite(html: string, max: number): SearchResult[] {
      .replace(/\s+/g, ' ')
      .trim();
 
-  // Try DDG HTML format first (div.result)
-  const htmlRegex = /<div[^>]*class="[^"]*result[^"]*"[^>]*>\s*<a[^>]*href="([^"]*)"[^>]*class="[^"]*result__a[^"]*"[^>]*>([^<]*)<\/a>[\s\S]*?<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-  let htmlMatch;
-  while ((htmlMatch = htmlRegex.exec(html)) && results.length < max) {
-    const url = htmlMatch[1];
-    const title = clean(htmlMatch[2]);
-    const snippet = clean(htmlMatch[3]);
-    if (title && url && !url.includes('duckduckgo.com')) {
-      results.push({ title, snippet, url: url.startsWith('//') ? `https:${url}` : url, source: 'duckduckgo' });
-    }
-  }
-  if (results.length > 0) return results;
-
-  // Try DDG HTML format (simpler pattern)
-  const simpleRegex = /<a[^>]*rel="nofollow"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<span[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
-  while ((htmlMatch = simpleRegex.exec(html)) && results.length < max) {
-    const url = htmlMatch[1];
-    const title = clean(htmlMatch[2]);
-    const snippet = clean(htmlMatch[3]);
-    if (title && url && !url.includes('duckduckgo.com')) {
-      results.push({ title, snippet, url: url.startsWith('//') ? `https:${url}` : url, source: 'duckduckgo' });
-    }
-  }
-  if (results.length > 0) return results;
-
   // Try Lite format (table rows)
-  const rows = html.split(/<tr[^>]*class=['"]result-snippet['"][^>]*>/i);
+  const rows = html.split(/<tr[^>]*class=['"]result-snippet['"][^>]*/i);
   if (rows.length >= 2) {
     for (let i = 1; i < rows.length && results.length < max; i++) {
       const row = rows[i];
@@ -202,6 +292,7 @@ function parseDDGLite(html: string, max: number): SearchResult[] {
   // Last resort: generic link extraction
   if (results.length === 0) {
     const genericRegex = /<a[^>]*href="(https?:\/\/[^"]*)"[^>]*>([^<]{10,})<\/a>/gi;
+    let htmlMatch;
     while ((htmlMatch = genericRegex.exec(html)) && results.length < max) {
       const url = htmlMatch[1];
       const title = clean(htmlMatch[2]);
@@ -218,7 +309,7 @@ function parseDDGLite(html: string, max: number): SearchResult[] {
 export function formatSearchResults(results: SearchResult[]): string {
   if (!results.length) return '';
   return results.map((r, i) =>
-    `[${i + 1}] ${r.title}\n${r.snippet}\nURL: ${r.url}`
+    `[${i + 1}] ${r.title}\n${r.snippet}${r.fullContent ? '\n[Full content available]' : ''}\nURL: ${r.url}`
   ).join('\n\n');
 }
 
@@ -226,8 +317,10 @@ export function formatSearchResults(results: SearchResult[]): string {
 export function getSourceIcon(source: string): string {
   switch (source) {
     case 'tavily': return '🔍';
+    case 'brave': return '🦁';
     case 'serper': return '🔎';
     case 'duckduckgo': return '🦆';
+    case 'jina': return '📄';
     default: return '🌐';
   }
 }

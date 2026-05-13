@@ -235,3 +235,50 @@ body {
   background: rgba(255, 255, 255, 0.04);
   font-weight: 600;
 }
+
+/* Custom scrollbar for panels */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Reduce glass blur on mobile for performance */
+@media (max-width: 767px) {
+  .glass {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .glass-strong {
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+  }
+}
+
+/* Link styling in report */
+.prose-invert a {
+  color: #4ade80;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-invert a:hover {
+  color: #86efac;
+}
+
+/* Citation links */
+.prose-invert sup a {
+  color: #22c55e;
+  text-decoration: none;
+  font-weight: 600;
+}
+.prose-invert sup a:hover {
+  text-decoration: underline;
+}

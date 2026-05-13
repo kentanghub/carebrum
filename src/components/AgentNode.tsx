@@ -1,6 +1,7 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { AgentState } from '@/types';
 import {
   Brain,
@@ -11,6 +12,8 @@ import {
   Loader2,
   Sparkles,
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -53,19 +56,19 @@ const statusConfig = {
 };
 
 const agentColors: Record<string, string> = {
-  orchestrator: 'from-green-500 to-emerald-500',
+  orchestrator: 'from-blue-500 to-cyan-500',
   multimodal_extractor: 'from-teal-500 to-green-500',
-  reasoning_engine: 'from-lime-500 to-green-500',
+  reasoning_engine: 'from-purple-500 to-violet-500',
   synthesizer: 'from-emerald-500 to-green-500',
-  critic: 'from-green-400 to-emerald-400',
+  critic: 'from-amber-500 to-orange-500',
 };
 
 const agentGlowColors: Record<string, string> = {
-  orchestrator: 'shadow-green-500/20',
+  orchestrator: 'shadow-blue-500/20',
   multimodal_extractor: 'shadow-teal-500/20',
-  reasoning_engine: 'shadow-lime-500/20',
+  reasoning_engine: 'shadow-purple-500/20',
   synthesizer: 'shadow-emerald-500/20',
-  critic: 'shadow-green-400/20',
+  critic: 'shadow-amber-500/20',
 };
 
 interface AgentNodeProps {
@@ -75,12 +78,17 @@ interface AgentNodeProps {
 }
 
 export default function AgentNode({ agent, isActive, index }: AgentNodeProps) {
+  const [expanded, setExpanded] = useState(false);
   const status = statusConfig[agent.status];
   const colorClass = agentColors[agent.id] || 'from-green-500 to-emerald-500';
   const glowColor = agentGlowColors[agent.id] || 'shadow-green-500/20';
 
+  const hasOutput = agent.output && (agent.status === 'completed' || agent.status === 'error');
+  const previewLength = 150;
+
   return (
     <motion.div
+      layout
       initial={{ opacity: 0, y: 20, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ delay: index * 0.1, duration: 0.4, ease: 'easeOut' }}
@@ -137,23 +145,40 @@ export default function AgentNode({ agent, isActive, index }: AgentNodeProps) {
             </span>
             {agent.startTime && agent.endTime && (
               <span className="text-[10px] text-gray-600 font-mono">
-                {(agent.endTime - agent.startTime) / 1000}s
+                {((agent.endTime - agent.startTime) / 1000).toFixed(1)}s
               </span>
             )}
           </div>
         )}
 
-        {/* Output preview */}
-        {agent.output && agent.status === 'completed' && (
+        {/* Output preview with expand/collapse */}
+        {hasOutput && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             className="mt-3 pt-3 border-t border-white/[0.04]"
           >
-            <p className="text-xs text-gray-400 line-clamp-3 leading-relaxed">
-              {agent.output.substring(0, 200)}
-              {agent.output.length > 200 ? '...' : ''}
-            </p>
+            <div className={`text-xs ${agent.status === 'error' ? 'text-rose-400' : 'text-gray-400'} leading-relaxed`}>
+              {expanded ? (
+                  <div className="max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                  {agent.output ?? ''}
+                </div>
+              ) : (
+                <p className="line-clamp-3">
+                  {agent.output?.substring(0, previewLength)}
+                  {(agent.output?.length ?? 0) > previewLength ? '...' : ''}
+                </p>
+              )}
+            </div>
+            {(agent.output?.length ?? 0) > previewLength && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                className="mt-2 flex items-center gap-1 text-[10px] text-gray-500 hover:text-green-400 transition-colors"
+              >
+                {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                {expanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
           </motion.div>
         )}
       </div>
