@@ -1,4 +1,4 @@
-import { AgentState, AgentMessage, StreamEvent, ResearchRequest } from '@/types';
+import { AgentState, AgentMessage, StreamEvent, ResearchRequest, SearchSource } from '@/types';
 import { completion, ACTIVE_MODEL } from './mimo-client';
 import { searchWeb, formatSearchResults } from './search';
 
@@ -43,32 +43,65 @@ function extractSection(text: string, marker: string, nextMarkers: string[]): st
   return m ? m[1].trim() : '';
 }
 
-// Generate smarter search queries based on the user's question
 function buildSearchQueries(query: string): string[] {
   const queries = [query];
-
-  // Add "Indonesia" if the query feels Indonesia-related but doesn't mention it
   if (!/indonesia/i.test(query)) {
     queries.push(`${query} Indonesia`);
   }
-
-  // For acronym-heavy queries, add expansion attempts
   const acronymMatch = query.match(/\b[A-Z]{2,5}\b/g);
   if (acronymMatch) {
     const acronym = acronymMatch[0];
-    // Search with context words that help disambiguate
     queries.push(`${acronym} adalah program Indonesia`);
     queries.push(`${query} terbaru 2025`);
   }
-
-  // For questions, add the topic without question words
   const noQuestion = query.replace(/^(apakah|apa|bagaimana|mengapa|kenapa|siapa|kapan|dimana)\s+/i, '');
   if (noQuestion !== query) {
     queries.push(noQuestion);
   }
-
   return [...new Set(queries)].slice(0, 4);
 }
+
+// ─── Citation Builder ───────────────────────────────────────────────────────
+
+function buildCitations(text: string, searchResults: any[]): { cited: string; refs: string } {
+  if (!searchResults.length) return { cited: text, refs: '' };
+
+  const refs: string[] = [];
+  const urlMap = new Map<string, number>();
+
+  // Find URLs mentioned in the text and assign citation numbers
+  for (const r of searchResults) {
+    if (!r.url) continue;
+    const domain = new URL(r.url).hostname.replace('www.', '');
+    // Check if the title or domain is referenced in the text
+    const titleWords = (r.title || '').split(/\s+/).filter((w: string) => w.length > 4);
+    const mentioned = titleWords.some((w: string) => text.toLowerCase().includes(w.toLowerCase())) ||
+                      text.includes(domain) ||
+                      text.includes(r.url);
+
+    if (mentioned && !urlMap.has(r.url)) {
+      const num = refs.length + 1;
+      urlMap.set(r.url, num);
+      refs.push(`[${num}] [${r.title || domain}](${r.url})`);
+    }
+  }
+
+  // Add source list at the end
+  let citedText = text;
+  for (const [url, num] of urlMap) {
+    const domain = new URL(url).hostname.replace('www.', '');
+    // Add superscript citation after domain mentions
+    citedText = citedText.replace(domain, `${domain}[^${num}]`);
+  }
+
+  const refsSection = refs.length > 0
+    ? `\n\n---\n\n## 📚 References\n\n${refs.join('\n')}`
+    : '';
+
+  return { cited: citedText, refs: refsSection };
+}
+
+// ─── Main Pipeline ──────────────────────────────────────────────────────────
 
 export async function* runResearchPipeline(
   req: ResearchRequest, agents: AgentState[]
@@ -76,44 +109,55 @@ export async function* runResearchPipeline(
   const t0 = Date.now();
   const depth = req.depth || 'standard';
   const cfg = DEPTH[depth] || DEPTH.standard;
+  const isFollowUp = req.mode === 'followup' && req.history && req.history.length > 0;
 
   try {
-    // ── Step 1: Start web search ──
-    const searchQueries = buildSearchQueries(req.query);
-    console.log(`[Search] queries:`, searchQueries);
+    // ── Step 1: Web search (skip for follow-up if context is sufficient) ──
+    let searchResults: any[] = [];
+    let searchText = '';
 
-    const searchResults: any[] = [];
-    const seenUrls = new Set<string>();
+    if (!isFollowUp || req.query.length > 20) {
+      const searchQueries = buildSearchQueries(req.query);
+      console.log(`[Search] queries:`, searchQueries);
 
-    for (const sq of searchQueries) {
-      if (searchResults.length >= cfg.searchCount) break;
-      try {
-        const batch = await Promise.race([
-          searchWeb(sq, 4),
-          new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 5000)),
-        ]);
-        for (const r of batch) {
-          if (!seenUrls.has(r.url) && searchResults.length < cfg.searchCount) {
-            seenUrls.add(r.url);
-            searchResults.push(r);
+      const seenUrls = new Set<string>();
+      for (const sq of searchQueries) {
+        if (searchResults.length >= cfg.searchCount) break;
+        try {
+          const batch = await Promise.race([
+            searchWeb(sq, 4),
+            new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 5000)),
+          ]);
+          for (const r of batch) {
+            if (!seenUrls.has(r.url) && searchResults.length < cfg.searchCount) {
+              seenUrls.add(r.url);
+              searchResults.push(r);
+            }
           }
-        }
-      } catch { /* continue */ }
-    }
+        } catch { /* continue */ }
+      }
+      searchText = searchResults.length > 0 ? formatSearchResults(searchResults) : '';
+      console.log(`[Search] ${searchResults.length} results in ${Date.now()-t0}ms`);
 
-    const searchText = searchResults.length > 0 ? formatSearchResults(searchResults) : '';
-    console.log(`[Search] ${searchResults.length} results in ${Date.now()-t0}ms`);
+      // Emit sources event for UI
+      yield {
+        type: 'sources',
+        data: searchResults.map((r: any) => ({
+          title: r.title,
+          snippet: r.snippet,
+          url: r.url,
+          source: r.source || 'duckduckgo',
+        })),
+      };
+    }
 
     // ── Step 2: Notify orchestrator ──
     const orch = agents.find(a => a.id === 'orchestrator')!;
     orch.status = 'running'; orch.startTime = Date.now();
-    yield { type: 'agent_start', agentId: orch.id, message: 'Researching & analyzing...' };
+    yield { type: 'agent_start', agentId: orch.id, message: isFollowUp ? 'Processing follow-up...' : 'Researching & analyzing...' };
 
-    // ── Step 3: Single API call ──
-    const raw = await callLLM([
-      {
-        role: 'system',
-        content: `You are a world-class research analyst. Your job: answer ANY question with accurate, specific, well-sourced information.
+    // ── Step 3: Build messages with history ──
+    const systemPrompt = `You are a world-class research analyst. Your job: answer ANY question with accurate, specific, well-sourced information.
 
 CAPABILITIES:
 - Answer factual questions, yes/no questions, comparative questions, explanatory questions
@@ -124,14 +168,13 @@ CAPABILITIES:
 RESPONSE FORMAT (use exactly these headers):
 
 ## TOPIC IDENTIFICATION
-- What is being asked about? If the query contains an acronym (like MBG, IKN, UU, etc.), state what it stands for based on search results and context.
-- Example: "MBG = Makan Bergizi Gratis (program pemerintah Indonesia)" or "MBG = Money Back Guarantee (e-commerce)"
+- What is being asked about? If the query contains an acronym, state what it stands for.
 
 ## FACTS & DATA
 - Specific information: dates, names, numbers, statistics, events
 - Background and historical context
 - Both supporting AND opposing evidence
-- ${searchText ? 'USE the web search results below as your PRIMARY source' : 'Use your training knowledge'}
+- ${searchText ? 'USE the web search results below as your PRIMARY source and CITE them by title' : 'Use your training knowledge'}
 
 ## ANALYSIS
 - DIRECTLY answer the question
@@ -140,35 +183,46 @@ RESPONSE FORMAT (use exactly these headers):
 - Comparative: contrast with clear criteria
 - Address counterarguments
 - Be CONCRETE — use real names, numbers, dates
+- CITE SOURCES: When referencing web results, mention the source title or domain
 
 ## CONCLUSION
 - Bottom line in 2-3 sentences
 
 ## SOURCES & LIMITATIONS
-- ${searchText ? 'Which search results were most useful?' : 'Note: no web search available'}
+- List the most useful sources by title and URL
 - Any gaps or uncertainties
 
 CRITICAL RULES:
 - NEVER write filler ("research indicates significant developments", "the ecosystem shows maturity")
 - ALWAYS give REAL, SPECIFIC information
-- For acronyms: DETERMINE the correct expansion from context. "MBG" in an Indonesian policy context = "Makan Bergizi Gratis". "MBG" in e-commerce = "Money Back Guarantee". Use search results + your knowledge to disambiguate.
+- CITE YOUR SOURCES: Reference web search results by their title or [number]
 - Write naturally — like briefing a colleague
 - Answer in the SAME LANGUAGE as the query
-- If you truly don't know, say so honestly and explain what's unclear
+- If you truly don't know, say so honestly
 
-${depth === 'deep' ? 'DEEP MODE: Extra thorough. Multiple perspectives, nuance, detailed analysis.' : depth === 'quick' ? 'QUICK MODE: Concise but data-driven. Get to the point fast.' : 'STANDARD MODE: Balanced depth with clear analysis.'}`,
-      },
-      {
-        role: 'user',
-        content: `QUERY: ${req.query}
+${depth === 'deep' ? 'DEEP MODE: Extra thorough. Multiple perspectives, nuance, detailed analysis.' : depth === 'quick' ? 'QUICK MODE: Concise but data-driven. Get to the point fast.' : 'STANDARD MODE: Balanced depth with clear analysis.'}`;
 
-${searchText ? `WEB SEARCH RESULTS (use as primary source):\n${chop(searchText, 3000)}` : '⚠ No web search results available. Use your training knowledge. If the topic is recent or niche, acknowledge the limitation.'}
+    const messages: AgentMessage[] = [
+      { role: 'system', content: systemPrompt },
+    ];
 
-Provide a complete, accurate, and well-structured answer.`,
-      },
-    ], depth);
+    // Add conversation history for follow-up
+    if (isFollowUp && req.history) {
+      for (const msg of req.history) {
+        messages.push(msg);
+      }
+    }
 
-    // ── Step 4: Parse and distribute ──
+    // Add current query with search results
+    messages.push({
+      role: 'user',
+      content: `QUERY: ${req.query}\n\n${searchText ? `WEB SEARCH RESULTS (cite these sources in your answer):\n${chop(searchText, 3000)}` : '⚠ No web search results available. Use your training knowledge.'}\n\nProvide a complete, accurate, and well-structured answer. CITE sources by title when referencing web results.`,
+    });
+
+    // ── Step 4: Single API call ──
+    const raw = await callLLM(messages, depth);
+
+    // ── Step 5: Parse and distribute ──
     const markers = ['## TOPIC IDENTIFICATION', '## FACTS & DATA', '## ANALYSIS', '## CONCLUSION', '## SOURCES & LIMITATIONS'];
 
     const topic    = extractSection(raw, '## TOPIC IDENTIFICATION', markers.filter(m => m !== '## TOPIC IDENTIFICATION'));
@@ -198,22 +252,28 @@ Provide a complete, accurate, and well-structured answer.`,
     reas.status = 'completed'; reas.endTime = Date.now();
     yield { type: 'agent_complete', agentId: reas.id, data: reas.output };
 
-    // Synthesizer — build report
+    // Synthesizer — build report with citations
     const synth = agents.find(a => a.id === 'synthesizer')!;
     synth.status = 'running'; synth.startTime = Date.now();
     yield { type: 'agent_start', agentId: synth.id, message: 'Writing final report...' };
+
+    const { cited, refs } = buildCitations(
+      analysis || '',
+      searchResults
+    );
 
     const report = [
       `# ${req.query}\n`,
       topic ? `*${topic}*\n` : '',
       `## 📌 Direct Answer`,
-      analysis || 'See analysis below.',
+      cited || 'See analysis below.',
       '',
       `## 📊 Key Facts & Data`,
       facts || 'See analysis above.',
       '',
       `## ✅ Conclusion`,
       concl || analysis?.split('\n').slice(-3).join('\n') || 'Analysis complete.',
+      refs,
       searchResults.length > 0 ? `\n---\n*${searchResults.length} web sources consulted*` : '',
     ].filter(Boolean).join('\n');
 
@@ -228,6 +288,9 @@ Provide a complete, accurate, and well-structured answer.`,
     crit.output = sources || `Report covers: ${req.query.slice(0, 80)}`;
     crit.status = 'completed'; crit.endTime = Date.now();
     yield { type: 'agent_complete', agentId: crit.id, data: crit.output };
+
+    // Signal follow-up ready
+    yield { type: 'followup_ready', data: { query: req.query, hasHistory: true } };
 
     console.log(`[Pipe] ✓ ${Date.now()-t0}ms | ${searchResults.length} web | ${raw.length}c`);
   } catch (e) {
