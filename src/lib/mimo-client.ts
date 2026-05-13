@@ -28,6 +28,12 @@ export const MODELS = {
 // Current active model - change this when you switch providers
 export const ACTIVE_MODEL = process.env.ACTIVE_MODEL || MODELS.BLUESMINDS_DEEPSEEK;
 
+// Model name normalization — MiMo API may use different formats
+function normalizeModel(model: string): string {
+  // mimo-v2.5-pro → try as-is first, then variants
+  return model;
+}
+
 // ===== MOCK RESPONSES (Fallback when no API key) =====
 function getMockResponse(messages: AgentMessage[], config: LLMConfig): string {
   const userMessage = messages.find(m => m.role === 'user')?.content || '';
@@ -237,14 +243,19 @@ export async function completion(
 
   if (!API_BASE_URL) {
     throw new Error(
-      'API_BASE_URL is not configured. Please set it in your environment variables (e.g., https://api.bluesminds.ai/v1).'
+      'API_BASE_URL is not configured. Please set it in your environment variables.'
     );
   }
 
+  const model = normalizeModel(config.model || ACTIVE_MODEL);
+  const timeoutMs = config.timeoutMs || 60000;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs || 30000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  console.log(`[LLM] Calling ${model} at ${API_BASE_URL} (timeout: ${timeoutMs}ms, max_tokens: ${config.max_tokens})`);
 
   try {
+    // Use streaming for faster first-token delivery
     const response = await fetch(`${API_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -252,11 +263,11 @@ export async function completion(
         'Authorization': `Bearer ${API_KEY}`,
       },
       body: JSON.stringify({
-        model: config.model || ACTIVE_MODEL,
+        model,
         messages,
         temperature: config.temperature ?? 0.7,
-        max_tokens: config.max_tokens ?? 4096,
-        stream: false,
+        max_tokens: config.max_tokens ?? 2048,
+        stream: true,
       }),
       signal: controller.signal,
     });
@@ -265,16 +276,49 @@ export async function completion(
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`API error ${response.status}: ${errorText}`);
+      console.error(`[LLM] API error ${response.status}: ${errorText.slice(0, 200)}`);
+      throw new Error(`API error ${response.status}: ${errorText.slice(0, 200)}`);
     }
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+    // Collect streaming response
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.trim() === '' || line.trim() === 'data: [DONE]') continue;
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            const content = data.choices?.[0]?.delta?.content;
+            if (content) result += content;
+          } catch {
+            // Skip malformed lines
+          }
+        }
+      }
+    }
+
+    console.log(`[LLM] ✓ Received ${result.length} chars`);
+    return result;
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timed out after ${config.timeoutMs || 30000}ms. The API may be slow or unavailable.`);
+      console.error(`[LLM] ✗ Timeout after ${timeoutMs}ms`);
+      throw new Error(`Request timed out after ${timeoutMs}ms. The API may be slow or the model may not exist.`);
     }
+    console.error(`[LLM] ✗ Error: ${error instanceof Error ? error.message : error}`);
     throw error;
   }
 }

@@ -15,9 +15,9 @@ export function initializeAgents(): AgentState[] {
 }
 
 const DEPTH: Record<string, { timeoutMs: number; maxTokens: number; temp: number; searchCount: number }> = {
-  quick:    { timeoutMs: 35000, maxTokens: 2800, temp: 0.4, searchCount: 4 },
-  standard: { timeoutMs: 50000, maxTokens: 4000, temp: 0.4, searchCount: 6 },
-  deep:     { timeoutMs: 55000, maxTokens: 5000, temp: 0.4, searchCount: 8 },
+  quick:    { timeoutMs: 45000, maxTokens: 1500, temp: 0.4, searchCount: 0 },
+  standard: { timeoutMs: 80000, maxTokens: 2500, temp: 0.4, searchCount: 0 },
+  deep:     { timeoutMs: 110000, maxTokens: 3500, temp: 0.4, searchCount: 0 },
 };
 
 function chop(s: string, n: number) { return s && s.length > n ? s.slice(0, n) + '\n[...]' : s || ''; }
@@ -157,50 +157,20 @@ export async function* runResearchPipeline(
     yield { type: 'agent_start', agentId: orch.id, message: isFollowUp ? 'Processing follow-up...' : 'Researching & analyzing...' };
 
     // ── Step 3: Build messages with history ──
-    const systemPrompt = `You are a world-class research analyst. Your job: answer ANY question with accurate, specific, well-sourced information.
+    const systemPrompt = `You are a research analyst. Answer the following question with accurate, specific information.
 
-CAPABILITIES:
-- Answer factual questions, yes/no questions, comparative questions, explanatory questions
-- Handle acronyms — use search results + context to determine the correct meaning
-- Analyze current events, programs, policies, trends — especially in Indonesia
-- Provide balanced views with evidence on both sides
-
-RESPONSE FORMAT (use exactly these headers):
-
+Use these exact headers in your response:
 ## TOPIC IDENTIFICATION
-- What is being asked about? If the query contains an acronym, state what it stands for.
-
-## FACTS & DATA
-- Specific information: dates, names, numbers, statistics, events
-- Background and historical context
-- Both supporting AND opposing evidence
-- ${searchText ? 'USE the web search results below as your PRIMARY source and CITE them by title' : 'Use your training knowledge'}
-
+## FACTS & DATA  
 ## ANALYSIS
-- DIRECTLY answer the question
-- Yes/no: state YES or NO clearly, then explain with evidence
-- Explanatory: break down causes, mechanisms, effects
-- Comparative: contrast with clear criteria
-- Address counterarguments
-- Be CONCRETE — use real names, numbers, dates
-- CITE SOURCES: When referencing web results, mention the source title or domain
-
 ## CONCLUSION
-- Bottom line in 2-3 sentences
-
 ## SOURCES & LIMITATIONS
-- List the most useful sources by title and URL
-- Any gaps or uncertainties
 
-CRITICAL RULES:
-- NEVER write filler ("research indicates significant developments", "the ecosystem shows maturity")
-- ALWAYS give REAL, SPECIFIC information
-- CITE YOUR SOURCES: Reference web search results by their title or [number]
-- Write naturally — like briefing a colleague
+Rules:
+- Be specific with names, dates, numbers
 - Answer in the SAME LANGUAGE as the query
-- If you truly don't know, say so honestly
-
-${depth === 'deep' ? 'DEEP MODE: Extra thorough. Multiple perspectives, nuance, detailed analysis.' : depth === 'quick' ? 'QUICK MODE: Concise but data-driven. Get to the point fast.' : 'STANDARD MODE: Balanced depth with clear analysis.'}`;
+- Write naturally, no filler text
+- ${depth === 'quick' ? 'Be concise.' : depth === 'deep' ? 'Be thorough with multiple perspectives.' : 'Be balanced.'}`;
 
     const messages: AgentMessage[] = [
       { role: 'system', content: systemPrompt },

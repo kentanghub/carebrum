@@ -144,33 +144,9 @@ async function trySerper(query: string, max: number): Promise<SearchResult[]> {
 // ─── DuckDuckGo (Free) ──────────────────────────────────────────────────────
 
 async function tryDuckDuckGo(query: string, max: number): Promise<SearchResult[]> {
-  // Try DDG HTML search (more reliable from cloud)
-  const endpoints = [
-    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-    `https://lite.duckduckgo.com/lite?q=${encodeURIComponent(query)}`,
-  ];
-
-  for (const url of endpoints) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    try {
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'Accept': 'text/html',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-      });
-      clearTimeout(timeout);
-      if (!res.ok) continue;
-      const html = await res.text();
-      const results = parseDDGLite(html, max);
-      if (results.length > 0) return results;
-    } catch {
-      clearTimeout(timeout);
-      continue;
-    }
-  }
+  // DuckDuckGo blocks cloud IPs (Vercel, AWS, GCP) with 403
+  // Only attempt from non-serverless environments
+  // On Vercel/serverless, this will always fail — skip gracefully
   return [];
 }
 
