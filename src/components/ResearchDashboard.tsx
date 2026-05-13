@@ -6,12 +6,14 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AgentState, StreamEvent, ResearchRequest, SearchSource, AgentMessage, ResearchSession } from '@/types';
 import AgentNode from './AgentNode';
+import TimelineView from './TimelineView';
+import MindMapView from './MindMapView';
 import Logo from './Logo';
 import NeuralBackground from './NeuralBackground';
 import {
   Sparkles, Zap, BookOpen, Telescope, Loader2, Download, Terminal, Play, Square,
   ExternalLink, CheckCircle2, BrainCircuit, Code2, FileText, Mic, MicOff,
-  History, X, MessageSquare, GitCompare, Clock, Share2, ChevronDown,
+  History, X, MessageSquare, GitCompare, Clock, Share2, ChevronDown, Network,
 } from 'lucide-react';
 
 const DEPTH_OPTIONS = [
@@ -57,6 +59,7 @@ export default function ResearchDashboard() {
   const [compareA, setCompareA] = useState('');
   const [compareB, setCompareB] = useState('');
   const recognitionRef = useRef<any>(null);
+  const [reportView, setReportView] = useState<'report' | 'timeline' | 'mindmap'>('report');
 
   // ─── Load sessions from localStorage ─────────────────────────────────────
   useEffect(() => {
@@ -746,9 +749,29 @@ export default function ResearchDashboard() {
                 </div>
               ) : (
                 <>
-                  <div id="report-content" className="prose-invert max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                  {/* View Tabs */}
+                  <div className="flex gap-1 mb-4 p-1 rounded-lg bg-white/[0.02] border border-white/[0.04] w-fit">
+                    <button onClick={() => setReportView('report')}
+                      className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'report' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
+                      <FileText className="w-3 h-3 inline mr-1" />Report
+                    </button>
+                    <button onClick={() => setReportView('timeline')}
+                      className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'timeline' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
+                      <Clock className="w-3 h-3 inline mr-1" />Timeline
+                    </button>
+                    <button onClick={() => setReportView('mindmap')}
+                      className={`px-3 py-1.5 rounded-md text-xs transition-all ${reportView === 'mindmap' ? 'bg-green-500/20 text-green-400' : 'text-gray-400 hover:text-white'}`}>
+                      <Network className="w-3 h-3 inline mr-1" />Mind Map
+                    </button>
                   </div>
+
+                  {reportView === 'report' && (
+                    <div id="report-content" className="prose-invert max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                    </div>
+                  )}
+                  {reportView === 'timeline' && <TimelineView report={report} query={query} />}
+                  {reportView === 'mindmap' && <MindMapView report={report} query={query} />}
 
                   {/* Follow-up Section */}
                   {showFollowUp && !isRunning && (
