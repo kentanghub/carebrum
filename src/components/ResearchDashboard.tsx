@@ -35,6 +35,14 @@ const COMPARE_SAMPLES = [
   ['Electric vehicles vs Hydrogen cars', 'Which is the future of transportation?'],
 ];
 
+const DEFAULT_AGENTS = [
+  { id: 'orchestrator', name: 'Orchestrator Agent', status: 'idle' as const, description: 'Analyzes query and plans research strategy', icon: 'Brain', messages: [] },
+  { id: 'multimodal_extractor', name: 'Web Extractor', status: 'idle' as const, description: 'Extracts and enriches information from multiple sources', icon: 'Eye', messages: [] },
+  { id: 'reasoning_engine', name: 'Reasoning Engine', status: 'idle' as const, description: 'Performs deep chain-of-thought reasoning and verification', icon: 'GitBranch', messages: [] },
+  { id: 'synthesizer', name: 'Report Synthesizer', status: 'idle' as const, description: 'Synthesizes findings into comprehensive report', icon: 'FileText', messages: [] },
+  { id: 'critic', name: 'Quality Critic', status: 'idle' as const, description: 'Reviews and refines final output for accuracy', icon: 'CheckCircle', messages: [] },
+];
+
 export default function ResearchDashboard() {
   // ─── Core State ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState('');
@@ -133,7 +141,7 @@ export default function ResearchDashboard() {
     setReport('');
     setLogs([]);
     setSources([]);
-    setAgents([]);
+    setAgents(DEFAULT_AGENTS.map(a => ({ ...a, status: 'idle' as const })));
     setActiveAgent(null);
     setShowReport(false);
     setShowFollowUp(false);
@@ -204,7 +212,7 @@ export default function ResearchDashboard() {
     setReport('');
     setLogs([]);
     setSources([]);
-    setAgents([]);
+    setAgents(DEFAULT_AGENTS.map(a => ({ ...a, status: 'idle' as const })));
     setShowReport(false);
     setShowFollowUp(false);
     setMode('followup');
