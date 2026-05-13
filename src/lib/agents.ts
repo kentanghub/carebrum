@@ -27,7 +27,7 @@ async function callLLM(msgs: AgentMessage[], depth: string): Promise<string> {
   const t = Date.now();
   try {
     const r = await Promise.race([
-      completion(msgs, { model: ACTIVE_MODEL, temperature: cfg.temp, max_tokens: cfg.maxTokens }),
+      completion(msgs, { model: ACTIVE_MODEL, temperature: cfg.temp, max_tokens: cfg.maxTokens, timeoutMs: cfg.timeoutMs }),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), cfg.timeoutMs)),
     ]);
     if (r && r.trim().length >= 30) { console.log(`[LLM] ✓ ${Date.now()-t}ms ${r.length}c`); return r; }

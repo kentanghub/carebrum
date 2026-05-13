@@ -144,25 +144,34 @@ async function trySerper(query: string, max: number): Promise<SearchResult[]> {
 // ─── DuckDuckGo (Free) ──────────────────────────────────────────────────────
 
 async function tryDuckDuckGo(query: string, max: number): Promise<SearchResult[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  // Try DDG HTML search (more reliable from cloud)
+  const endpoints = [
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+    `https://lite.duckduckgo.com/lite?q=${encodeURIComponent(query)}`,
+  ];
 
-  try {
-    const res = await fetch(`https://lite.duckduckgo.com/lite?q=${encodeURIComponent(query)}`, {
-      signal: controller.signal,
-      headers: {
-        'Accept': 'text/html',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36',
-      },
-    });
-    clearTimeout(timeout);
-    if (!res.ok) return [];
-    const html = await res.text();
-    return parseDDGLite(html, max);
-  } catch {
-    clearTimeout(timeout);
-    return [];
+  for (const url of endpoints) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'text/html',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      const html = await res.text();
+      const results = parseDDGLite(html, max);
+      if (results.length > 0) return results;
+    } catch {
+      clearTimeout(timeout);
+      continue;
+    }
   }
+  return [];
 }
 
 function parseDDGLite(html: string, max: number): SearchResult[] {
@@ -173,35 +182,57 @@ function parseDDGLite(html: string, max: number): SearchResult[] {
      .replace(/\s+/g, ' ')
      .trim();
 
-  const rows = html.split(/<tr[^>]*class=['"]result-snippet['"][^>]*>/i);
-
-  if (rows.length < 2 && !html.includes('result-snippet')) {
-    const altRegex = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>\s*<span[^>]*class="link-text"[^>]*>([^<]*)<\/span>\s*<td[^>]*class="result-snippet"[^>]*>([^<]*)/gi;
-    let altMatch;
-    while ((altMatch = altRegex.exec(html)) && results.length < max) {
-      const title = clean(altMatch[2]);
-      const url = altMatch[1] || '';
-      const snippet = clean(altMatch[4]) || clean(altMatch[3]);
-      if (title && url && !url.includes('duckduckgo.com')) {
-        results.push({ title, snippet, url, source: 'duckduckgo' });
-      }
+  // Try DDG HTML format first (div.result)
+  const htmlRegex = /<div[^>]*class="[^"]*result[^"]*"[^>]*>\s*<a[^>]*href="([^"]*)"[^>]*class="[^"]*result__a[^"]*"[^>]*>([^<]*)<\/a>[\s\S]*?<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+  let htmlMatch;
+  while ((htmlMatch = htmlRegex.exec(html)) && results.length < max) {
+    const url = htmlMatch[1];
+    const title = clean(htmlMatch[2]);
+    const snippet = clean(htmlMatch[3]);
+    if (title && url && !url.includes('duckduckgo.com')) {
+      results.push({ title, snippet, url: url.startsWith('//') ? `https:${url}` : url, source: 'duckduckgo' });
     }
-    return results;
+  }
+  if (results.length > 0) return results;
+
+  // Try DDG HTML format (simpler pattern)
+  const simpleRegex = /<a[^>]*rel="nofollow"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<span[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
+  while ((htmlMatch = simpleRegex.exec(html)) && results.length < max) {
+    const url = htmlMatch[1];
+    const title = clean(htmlMatch[2]);
+    const snippet = clean(htmlMatch[3]);
+    if (title && url && !url.includes('duckduckgo.com')) {
+      results.push({ title, snippet, url: url.startsWith('//') ? `https:${url}` : url, source: 'duckduckgo' });
+    }
+  }
+  if (results.length > 0) return results;
+
+  // Try Lite format (table rows)
+  const rows = html.split(/<tr[^>]*class=['"]result-snippet['"][^>]*>/i);
+  if (rows.length >= 2) {
+    for (let i = 1; i < rows.length && results.length < max; i++) {
+      const row = rows[i];
+      const linkMatch = row.match(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/);
+      if (!linkMatch) continue;
+      const url = linkMatch[1];
+      const title = clean(linkMatch[2]);
+      if (!title || !url || url.includes('duckduckgo.com')) continue;
+      const afterLink = row.slice(row.indexOf(linkMatch[0]) + linkMatch[0].length);
+      const snippet = clean(afterLink);
+      results.push({ title, snippet, url: url.startsWith('//') ? `https:${url}` : url, source: 'duckduckgo' });
+    }
   }
 
-  for (let i = 1; i < rows.length && results.length < max; i++) {
-    const row = rows[i];
-    const linkMatch = row.match(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/);
-    if (!linkMatch) continue;
-
-    const url = linkMatch[1];
-    const title = clean(linkMatch[2]);
-    if (!title || !url || url.includes('duckduckgo.com')) continue;
-
-    const afterLink = row.slice(row.indexOf(linkMatch[0]) + linkMatch[0].length);
-    const snippet = clean(afterLink);
-
-    results.push({ title, snippet, url: url.startsWith('//') ? `https:${url}` : url, source: 'duckduckgo' });
+  // Last resort: generic link extraction
+  if (results.length === 0) {
+    const genericRegex = /<a[^>]*href="(https?:\/\/[^"]*)"[^>]*>([^<]{10,})<\/a>/gi;
+    while ((htmlMatch = genericRegex.exec(html)) && results.length < max) {
+      const url = htmlMatch[1];
+      const title = clean(htmlMatch[2]);
+      if (title && url && !url.includes('duckduckgo.com') && !url.includes('duck.co')) {
+        results.push({ title, snippet: '', url, source: 'duckduckgo' });
+      }
+    }
   }
 
   return results;
