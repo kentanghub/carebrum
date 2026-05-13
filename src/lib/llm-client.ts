@@ -113,6 +113,21 @@ function initProviders() {
     };
   }
 
+  // Canopywave (Kimi K2.6 — powerful, ~15 days credit)
+  if (process.env.CANOPYWAVE_API_KEY) {
+    PROVIDERS['canopywave'] = {
+      name: 'Canopywave (Kimi)',
+      baseUrl: process.env.CANOPYWAVE_API_BASE_URL || 'https://inference.canopywave.io/v1',
+      apiKey: process.env.CANOPYWAVE_API_KEY,
+      models: {
+        'kimi-k2.6': 'moonshotai/kimi-k2.6',
+      },
+      defaultModel: 'moonshotai/kimi-k2.6',
+      maxTokens: 8192,
+      isFree: false,
+    };
+  }
+
   // Bluesminds (legacy — user's credits)
   if (process.env.BLUESMINDS_API_KEY) {
     PROVIDERS['bluesminds'] = {

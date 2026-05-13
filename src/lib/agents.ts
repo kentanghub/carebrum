@@ -56,11 +56,11 @@ function getAgentModelConfig(agentId: string, depth: string): { provider?: strin
       // Balanced model for extraction
       return { provider: 'groq', temperature: 0.3 };
     case 'reasoning_engine':
-      // Best model for deep reasoning
-      return { temperature: depthCfg.temp };
+      // Best model for deep reasoning — Kimi K2.6 if available
+      return { provider: 'canopywave', temperature: depthCfg.temp };
     case 'synthesizer':
-      // Best model for report writing
-      return { temperature: 0.5 };
+      // Best model for report writing — Kimi K2.6 if available
+      return { provider: 'canopywave', temperature: 0.5 };
     case 'critic':
       // Different model for objectivity
       return { provider: 'google', temperature: 0.3 };
