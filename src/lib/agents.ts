@@ -14,7 +14,7 @@
  */
 
 import { AgentState, AgentMessage, StreamEvent, ResearchRequest, SearchSource, VerificationResult, StructuredData } from '@/types';
-import { completion, streamCompletion, ACTIVE_MODEL, getAvailableProviders } from './llm-client';
+import { completion, streamCompletion, ACTIVE_MODEL, getAvailableProviders, PROVIDERS } from './llm-client';
 import { searchWeb, crawlPages, formatSearchResults } from './search';
 import { searchAcademic, formatAcademicResults } from './academic';
 import { getTemplate } from './templates';
@@ -82,26 +82,24 @@ async function callLLMWithFallback(
   const cfg = DEPTH[depth] || DEPTH.standard;
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
+  const OVERALL_DEADLINE = 90000; // 90 seconds max for entire fallback chain
+  const PER_PROVIDER_TIMEOUT = 20000; // 20 seconds per provider
 
   // Try primary provider first, then fallback chain
   const configsToTry = [
     { provider: modelCfg.provider, model: modelCfg.model, temperature: modelCfg.temperature },
-    // Fallback 1: Canopywave (Kimi K2.6 — paid, ~15 days)
     { provider: 'canopywave', temperature: modelCfg.temperature },
-    // Fallback 2: NVIDIA (free — Nemotron/DeepSeek/Qwen)
     { provider: 'nvidia', temperature: modelCfg.temperature },
-    // Fallback 3: Groq (free — Llama 3.3 70B)
     { provider: 'groq', temperature: modelCfg.temperature },
-    // Fallback 4: Google Gemini (free)
     { provider: 'google', temperature: modelCfg.temperature },
-    // Fallback 5: OpenRouter (free models)
     { provider: 'openrouter', temperature: modelCfg.temperature },
   ];
 
-  // Deduplicate by provider name, keeping order
+  // Deduplicate by provider name, keeping order, skip unconfigured
   const seen = new Set<string>();
   const uniqueConfigs = configsToTry.filter(c => {
     if (!c.provider || seen.has(c.provider)) return false;
+    if (!PROVIDERS[c.provider]) return false; // Skip unconfigured providers
     seen.add(c.provider);
     return true;
   });
@@ -109,13 +107,19 @@ async function callLLMWithFallback(
   let lastError: Error | null = null;
 
   for (const config of uniqueConfigs) {
+    // Check overall deadline
+    if (Date.now() - t > OVERALL_DEADLINE) {
+      console.log(`[LLM] ⏰ ${agentId} overall deadline reached (${Date.now()-t}ms)`);
+      break;
+    }
+
     try {
       const result = await completion(msgs, {
         provider: config.provider,
         model: config.model,
         temperature: config.temperature,
         max_tokens: cfg.maxTokens,
-        timeoutMs: cfg.timeoutMs,
+        timeoutMs: PER_PROVIDER_TIMEOUT,
       });
 
       if (result.trim().length >= 20) {
@@ -126,7 +130,6 @@ async function callLLMWithFallback(
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
       console.log(`[LLM] ✗ ${agentId} via ${config.provider}: ${lastError.message.slice(0, 80)}`);
-      // Continue to next provider
     }
   }
 
@@ -142,6 +145,8 @@ async function callLLMStreamWithCallback(
   const cfg = DEPTH[depth] || DEPTH.standard;
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
+  const OVERALL_DEADLINE = 90000;
+  const PER_PROVIDER_TIMEOUT = 20000;
 
   // Try primary provider, fallback chain
   const configsToTry = [
@@ -156,6 +161,7 @@ async function callLLMStreamWithCallback(
   const seen = new Set<string>();
   const uniqueConfigs = configsToTry.filter(c => {
     if (!c.provider || seen.has(c.provider)) return false;
+    if (!PROVIDERS[c.provider]) return false;
     seen.add(c.provider);
     return true;
   });
@@ -163,6 +169,11 @@ async function callLLMStreamWithCallback(
   let lastError: Error | null = null;
 
   for (const config of uniqueConfigs) {
+    if (Date.now() - t > OVERALL_DEADLINE) {
+      console.log(`[LLM] ⏰ ${agentId} stream overall deadline reached (${Date.now()-t}ms)`);
+      break;
+    }
+
     try {
       let result = '';
       const stream = streamCompletion(msgs, {
@@ -170,6 +181,7 @@ async function callLLMStreamWithCallback(
         model: config.model,
         temperature: config.temperature,
         max_tokens: cfg.maxTokens,
+        timeoutMs: PER_PROVIDER_TIMEOUT,
       });
 
       for await (const token of stream) {
