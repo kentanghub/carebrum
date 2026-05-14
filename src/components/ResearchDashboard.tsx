@@ -99,6 +99,7 @@ export default function ResearchDashboard() {
   const [streamingReport, setStreamingReport] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  const streamingReportRef = useRef('');
   const [pipelineProgress, setPipelineProgress] = useState(0);
   const [pipelineStep, setPipelineStep] = useState(0);
 
@@ -237,6 +238,7 @@ export default function ResearchDashboard() {
     setIsRunning(true);
     setReport('');
     setStreamingReport('');
+    streamingReportRef.current = '';
     setIsStreaming(true);
     setLogs([]);
     setSources([]);
@@ -301,6 +303,12 @@ export default function ResearchDashboard() {
         addLog(`✗ Error: ${error.message}`);
       }
     } finally {
+      // If pipeline ended without emitting the final 'report' event (e.g. error at Critic step),
+      // promote the streamed content so the report doesn't disappear.
+      setReport(prev => {
+        if (!prev && streamingReportRef.current) return streamingReportRef.current;
+        return prev;
+      });
       setIsRunning(false);
       setIsStreaming(false);
       setActiveAgent(null);
@@ -319,6 +327,7 @@ export default function ResearchDashboard() {
     setIsRunning(true);
     setReport('');
     setStreamingReport('');
+    streamingReportRef.current = '';
     setIsStreaming(true);
     setLogs([]);
     setSources([]);
@@ -363,6 +372,10 @@ export default function ResearchDashboard() {
     } catch (error) {
       if (error instanceof Error) addLog(`✗ Error: ${error.message}`);
     } finally {
+      setReport(prev => {
+        if (!prev && streamingReportRef.current) return streamingReportRef.current;
+        return prev;
+      });
       setIsRunning(false);
       setIsStreaming(false);
       setActiveAgent(null);
@@ -412,9 +425,19 @@ export default function ResearchDashboard() {
       case 'report_token':
         // Stream report tokens in real-time
         if (event.token) {
-          setStreamingReport(prev => prev + event.token);
+          setStreamingReport(prev => {
+            const next = prev + event.token;
+            streamingReportRef.current = next;
+            return next;
+          });
           setShowReport(true);
         }
+        break;
+
+      case 'report_clear':
+        // Reset streaming report between refinement iterations
+        setStreamingReport('');
+        streamingReportRef.current = '';
         break;
 
       case 'agent_complete':
@@ -434,6 +457,7 @@ export default function ResearchDashboard() {
       case 'report':
         setReport(event.data || '');
         setStreamingReport(event.data || '');
+        streamingReportRef.current = event.data || '';
         setShowReport(true);
         setIsStreaming(false);
         addLog('✓ Report generated');

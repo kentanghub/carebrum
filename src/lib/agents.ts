@@ -108,18 +108,21 @@ async function callLLMWithFallback(
 
   for (const config of uniqueConfigs) {
     // Check overall deadline
-    if (Date.now() - t > OVERALL_DEADLINE) {
+    const remaining = OVERALL_DEADLINE - (Date.now() - t);
+    if (remaining < 5000) {
       console.log(`[LLM] ⏰ ${agentId} overall deadline reached (${Date.now()-t}ms)`);
       break;
     }
 
     try {
+      // Use remaining time as timeout, capped at PER_PROVIDER_TIMEOUT
+      const providerTimeout = Math.min(remaining, PER_PROVIDER_TIMEOUT);
       const result = await completion(msgs, {
         provider: config.provider,
         model: config.model,
         temperature: config.temperature,
         max_tokens: cfg.maxTokens,
-        timeoutMs: PER_PROVIDER_TIMEOUT,
+        timeoutMs: providerTimeout,
       });
 
       if (result.trim().length >= 20) {
@@ -169,19 +172,21 @@ async function callLLMStreamWithCallback(
   let lastError: Error | null = null;
 
   for (const config of uniqueConfigs) {
-    if (Date.now() - t > OVERALL_DEADLINE) {
+    const remaining = OVERALL_DEADLINE - (Date.now() - t);
+    if (remaining < 5000) {
       console.log(`[LLM] ⏰ ${agentId} stream overall deadline reached (${Date.now()-t}ms)`);
       break;
     }
 
     try {
       let result = '';
+      const providerTimeout = Math.min(remaining, PER_PROVIDER_TIMEOUT);
       const stream = streamCompletion(msgs, {
         provider: config.provider,
         model: config.model,
         temperature: config.temperature,
         max_tokens: cfg.maxTokens,
-        timeoutMs: PER_PROVIDER_TIMEOUT,
+        timeoutMs: providerTimeout,
       });
 
       for await (const token of stream) {
@@ -550,6 +555,11 @@ export async function* runResearchPipeline(
     for (iteration = 1; iteration <= maxIterations; iteration++) {
       yield { type: 'iteration', iteration, maxIterations, message: `Iteration ${iteration}/${maxIterations}` };
 
+      // Clear previous streaming report when starting a new refinement iteration
+      if (iteration > 1) {
+        yield { type: 'report_clear' };
+      }
+
       // SYNTHESIZER (streaming)
       const synth = agents.find(a => a.id === 'synthesizer') || agents[3];
       synth.status = 'running'; synth.startTime = Date.now();
@@ -581,6 +591,7 @@ export async function* runResearchPipeline(
       const crit = agents.find(a => a.id === 'critic')!;
       crit.status = 'running'; crit.startTime = Date.now();
       yield { type: 'agent_start', agentId: crit.id, message: `Quality review (iteration ${iteration})...` };
+      yield { type: 'progress', step: 4, progress: 82, message: 'Quality Critic reviewing report...' };
 
       const critMsgs: AgentMessage[] = [
         { role: 'system', content: template.systemPrompts.critic },
@@ -598,10 +609,12 @@ export async function* runResearchPipeline(
       const needsRefinement = critResult.includes('NEEDS_REFINEMENT: true') && iteration < maxIterations;
       if (!needsRefinement) {
         console.log(`[Pipe] Quality check passed at iteration ${iteration}`);
+        yield { type: 'progress', step: 4, progress: 85, message: 'Quality check passed ✓' };
         break;
       }
 
       criticFeedback = critResult;
+      yield { type: 'progress', step: 4, progress: 80, message: 'Refinement needed, re-running synthesis...' };
       console.log(`[Pipe] Refinement needed, starting iteration ${iteration + 1}`);
     }
 

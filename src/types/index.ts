@@ -46,7 +46,7 @@ export interface ResearchResponse {
 }
 
 export interface StreamEvent {
-  type: 'agent_start' | 'agent_update' | 'agent_complete' | 'agent_token' | 'report' | 'report_token' | 'error' | 'sources' | 'followup_ready' | 'progress' | 'verification' | 'iteration' | 'structured_data' | 'knowledge_update';
+  type: 'agent_start' | 'agent_update' | 'agent_complete' | 'agent_token' | 'report' | 'report_token' | 'report_clear' | 'error' | 'sources' | 'followup_ready' | 'progress' | 'verification' | 'iteration' | 'structured_data' | 'knowledge_update';
   agentId?: string;
   data?: any;
   message?: string;
