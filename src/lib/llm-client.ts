@@ -113,6 +113,27 @@ function initProviders() {
     };
   }
 
+  // NVIDIA (FREE — Nemotron, DeepSeek, Qwen via build.nvidia.com)
+  if (process.env.NVIDIA_API_KEY) {
+    PROVIDERS['nvidia'] = {
+      name: 'NVIDIA (Free)',
+      baseUrl: 'https://integrate.api.nvidia.com/v1',
+      apiKey: process.env.NVIDIA_API_KEY,
+      models: {
+        'nemotron-super-49b': 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+        'deepseek-v4-pro': 'deepseek-ai/deepseek-v4-pro',
+        'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
+        'qwen3.5-122b': 'qwen/qwen3.5-122b-a10b',
+        'llama4-maverick': 'meta/llama-4-maverick-17b-128e-instruct',
+        'nemotron-ultra-253b': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+        'phi-4-mini': 'microsoft/phi-4-mini-instruct',
+      },
+      defaultModel: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+      maxTokens: 8192,
+      isFree: true,
+    };
+  }
+
   // Canopywave (Kimi K2.6 — powerful, ~15 days credit)
   if (process.env.CANOPYWAVE_API_KEY) {
     PROVIDERS['canopywave'] = {

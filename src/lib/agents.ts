@@ -54,19 +54,19 @@ function getAgentModelConfig(agentId: string, depth: string): { provider?: strin
       return { provider: 'groq', temperature: 0.4 };
     case 'multimodal_extractor':
       // Balanced model for extraction
-      return { provider: 'groq', temperature: 0.3 };
+      return { provider: 'nvidia', temperature: 0.3 };
     case 'reasoning_engine':
-      // Best model for deep reasoning — Kimi K2.6 if available
-      return { provider: 'canopywave', temperature: depthCfg.temp };
+      // Best model for deep reasoning — MiMo primary
+      return { provider: 'mimo', temperature: depthCfg.temp };
     case 'synthesizer':
-      // Best model for report writing — Kimi K2.6 if available
-      return { provider: 'canopywave', temperature: 0.5 };
+      // Best model for report writing — MiMo primary
+      return { provider: 'mimo', temperature: 0.5 };
     case 'critic':
       // Different model for objectivity
       return { provider: 'google', temperature: 0.3 };
     case 'verifier':
       // Fast model for fact-checking
-      return { provider: 'groq', temperature: 0.2 };
+      return { provider: 'nvidia', temperature: 0.2 };
     default:
       return { temperature: depthCfg.temp };
   }
@@ -83,14 +83,18 @@ async function callLLMWithFallback(
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
 
-  // Try primary provider first, then fallback to free providers
+  // Try primary provider first, then fallback chain
   const configsToTry = [
     { provider: modelCfg.provider, model: modelCfg.model, temperature: modelCfg.temperature },
-    // Fallback 1: Groq (free, fast)
+    // Fallback 1: Canopywave (Kimi K2.6 — paid, ~15 days)
+    { provider: 'canopywave', temperature: modelCfg.temperature },
+    // Fallback 2: NVIDIA (free — Nemotron/DeepSeek/Qwen)
+    { provider: 'nvidia', temperature: modelCfg.temperature },
+    // Fallback 3: Groq (free — Llama 3.3 70B)
     { provider: 'groq', temperature: modelCfg.temperature },
-    // Fallback 2: Google Gemini (free)
+    // Fallback 4: Google Gemini (free)
     { provider: 'google', temperature: modelCfg.temperature },
-    // Fallback 3: OpenRouter (free models)
+    // Fallback 5: OpenRouter (free models)
     { provider: 'openrouter', temperature: modelCfg.temperature },
   ];
 
@@ -139,9 +143,11 @@ async function callLLMStreamWithCallback(
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
 
-  // Try primary provider, fallback to free providers
+  // Try primary provider, fallback chain
   const configsToTry = [
     { provider: modelCfg.provider, model: modelCfg.model, temperature: modelCfg.temperature },
+    { provider: 'canopywave', temperature: modelCfg.temperature },
+    { provider: 'nvidia', temperature: modelCfg.temperature },
     { provider: 'groq', temperature: modelCfg.temperature },
     { provider: 'google', temperature: modelCfg.temperature },
     { provider: 'openrouter', temperature: modelCfg.temperature },
