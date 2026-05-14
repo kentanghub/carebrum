@@ -179,6 +179,8 @@ export interface LLMConfig {
   timeoutMs?: number;
   /** Force free providers only */
   preferFree?: boolean;
+  /** External abort signal for overall deadline control */
+  signal?: AbortSignal;
 }
 
 /** Route to the best available provider+model */
@@ -224,18 +226,25 @@ function resolveProvider(config: LLMConfig): { provider: ProviderConfig; model: 
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   maxRetries: number = 2,
-  baseDelay: number = 1000
+  baseDelay: number = 1000,
+  signal?: AbortSignal
 ): Promise<T> {
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // If the outer signal is aborted, stop immediately
+    if (signal?.aborted) {
+      throw new Error('Aborted by deadline');
+    }
+    
     try {
       return await fn();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       
-      // Don't retry on auth errors
-      if (lastError.message.includes('401') || lastError.message.includes('403')) {
+      // Don't retry on auth errors or abort/timeout
+      if (lastError.message.includes('401') || lastError.message.includes('403') ||
+          lastError.name === 'AbortError' || lastError.message.includes('Aborted')) {
         throw lastError;
       }
       
@@ -364,6 +373,11 @@ export async function completion(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     
+    // If an external signal is provided, propagate its abort to our controller
+    const onExternalAbort = () => controller.abort();
+    config.signal?.addEventListener('abort', onExternalAbort);
+    if (config.signal?.aborted) controller.abort();
+    
     try {
       const url = `${provider.baseUrl}/chat/completions`;
       
@@ -387,14 +401,16 @@ export async function completion(
         signal: controller.signal,
       });
       
-      clearTimeout(timeoutId);
-      
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
         throw new Error(`${provider.name} API ${response.status}: ${errText.slice(0, 200)}`);
       }
       
+      // Keep timeout active through body read — only clear after full response
       const data = await response.json();
+      clearTimeout(timeoutId);
+      config.signal?.removeEventListener('abort', onExternalAbort);
+      
       const content = data.choices?.[0]?.message?.content || '';
       const usage = data.usage;
       
@@ -411,9 +427,10 @@ export async function completion(
       return content;
     } catch (error) {
       clearTimeout(timeoutId);
+      config.signal?.removeEventListener('abort', onExternalAbort);
       throw error;
     }
-  }, 2, 1500);
+  }, 2, 1500, config.signal);
   
   inflightRequests.set(key, promise);
   
@@ -424,7 +441,7 @@ export async function completion(
   }
 }
 
-/** Streaming completion with retry + fallback */
+/** Streaming completion with inactivity timeout + external signal support */
 export async function* streamCompletion(
   messages: AgentMessage[],
   config: LLMConfig = {}
@@ -443,8 +460,16 @@ export async function* streamCompletion(
   }
   
   const timeoutMs = config.timeoutMs || 60000;
+  const INACTIVITY_TIMEOUT = 15000; // 15s with no chunks = abort
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  // If an external signal is provided, propagate its abort
+  const onExternalAbort = () => controller.abort();
+  config.signal?.addEventListener('abort', onExternalAbort);
+  if (config.signal?.aborted) controller.abort();
+  
+  // Set initial timeout for connection
+  let timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
   try {
     const url = `${provider.baseUrl}/chat/completions`;
@@ -469,7 +494,9 @@ export async function* streamCompletion(
       signal: controller.signal,
     });
     
+    // Switch to inactivity timeout for the body stream
     clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => controller.abort(), INACTIVITY_TIMEOUT);
     
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -486,6 +513,10 @@ export async function* streamCompletion(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      
+      // Reset inactivity timeout on each chunk
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => controller.abort(), INACTIVITY_TIMEOUT);
       
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
@@ -512,9 +543,12 @@ export async function* streamCompletion(
       }
     }
     
+    clearTimeout(timeoutId);
+    config.signal?.removeEventListener('abort', onExternalAbort);
     console.log(`[LLM] ✓ ${provider.name}/${model} (stream) ${totalContent.length}c`);
   } catch (error) {
     clearTimeout(timeoutId);
+    config.signal?.removeEventListener('abort', onExternalAbort);
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`Timeout after ${timeoutMs}ms from ${provider.name}`);
     }

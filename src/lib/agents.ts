@@ -85,6 +85,10 @@ async function callLLMWithFallback(
   const OVERALL_DEADLINE = 90000; // 90 seconds max for entire fallback chain
   const PER_PROVIDER_TIMEOUT = 20000; // 20 seconds per provider
 
+  // Hard deadline: abort ALL providers when this fires
+  const deadlineController = new AbortController();
+  const deadlineTimer = setTimeout(() => deadlineController.abort(), OVERALL_DEADLINE);
+
   // Try primary provider first, then fallback chain
   const configsToTry = [
     { provider: modelCfg.provider, model: modelCfg.model, temperature: modelCfg.temperature },
@@ -106,37 +110,42 @@ async function callLLMWithFallback(
 
   let lastError: Error | null = null;
 
-  for (const config of uniqueConfigs) {
-    // Check overall deadline
-    const remaining = OVERALL_DEADLINE - (Date.now() - t);
-    if (remaining < 5000) {
-      console.log(`[LLM] ⏰ ${agentId} overall deadline reached (${Date.now()-t}ms)`);
-      break;
-    }
-
-    try {
-      // Use remaining time as timeout, capped at PER_PROVIDER_TIMEOUT
-      const providerTimeout = Math.min(remaining, PER_PROVIDER_TIMEOUT);
-      const result = await completion(msgs, {
-        provider: config.provider,
-        model: config.model,
-        temperature: config.temperature,
-        max_tokens: cfg.maxTokens,
-        timeoutMs: providerTimeout,
-      });
-
-      if (result.trim().length >= 20) {
-        console.log(`[LLM] ✓ ${agentId} via ${config.provider} ${Date.now()-t}ms ${result.length}c`);
-        return result;
+  try {
+    for (const config of uniqueConfigs) {
+      // Check overall deadline
+      const remaining = OVERALL_DEADLINE - (Date.now() - t);
+      if (remaining < 5000 || deadlineController.signal.aborted) {
+        console.log(`[LLM] ⏰ ${agentId} overall deadline reached (${Date.now()-t}ms)`);
+        break;
       }
-      lastError = new Error('short/empty response');
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
-      console.log(`[LLM] ✗ ${agentId} via ${config.provider}: ${lastError.message.slice(0, 80)}`);
-    }
-  }
 
-  throw new Error(`Agent ${agentId} failed on all providers: ${lastError?.message || 'unknown'} (${Date.now()-t}ms)`);
+      try {
+        // Use remaining time as timeout, capped at PER_PROVIDER_TIMEOUT
+        const providerTimeout = Math.min(remaining, PER_PROVIDER_TIMEOUT);
+        const result = await completion(msgs, {
+          provider: config.provider,
+          model: config.model,
+          temperature: config.temperature,
+          max_tokens: cfg.maxTokens,
+          timeoutMs: providerTimeout,
+          signal: deadlineController.signal, // Pass hard deadline signal
+        });
+
+        if (result.trim().length >= 20) {
+          console.log(`[LLM] ✓ ${agentId} via ${config.provider} ${Date.now()-t}ms ${result.length}c`);
+          return result;
+        }
+        lastError = new Error('short/empty response');
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        console.log(`[LLM] ✗ ${agentId} via ${config.provider}: ${lastError.message.slice(0, 80)}`);
+      }
+    }
+
+    throw new Error(`Agent ${agentId} failed on all providers: ${lastError?.message || 'unknown'} (${Date.now()-t}ms)`);
+  } finally {
+    clearTimeout(deadlineTimer);
+  }
 }
 
 async function callLLMStreamWithCallback(
@@ -150,6 +159,10 @@ async function callLLMStreamWithCallback(
   const t = Date.now();
   const OVERALL_DEADLINE = 90000;
   const PER_PROVIDER_TIMEOUT = 20000;
+
+  // Hard deadline: abort ALL providers when this fires
+  const deadlineController = new AbortController();
+  const deadlineTimer = setTimeout(() => deadlineController.abort(), OVERALL_DEADLINE);
 
   // Try primary provider, fallback chain
   const configsToTry = [
@@ -171,41 +184,46 @@ async function callLLMStreamWithCallback(
 
   let lastError: Error | null = null;
 
-  for (const config of uniqueConfigs) {
-    const remaining = OVERALL_DEADLINE - (Date.now() - t);
-    if (remaining < 5000) {
-      console.log(`[LLM] ⏰ ${agentId} stream overall deadline reached (${Date.now()-t}ms)`);
-      break;
-    }
-
-    try {
-      let result = '';
-      const providerTimeout = Math.min(remaining, PER_PROVIDER_TIMEOUT);
-      const stream = streamCompletion(msgs, {
-        provider: config.provider,
-        model: config.model,
-        temperature: config.temperature,
-        max_tokens: cfg.maxTokens,
-        timeoutMs: providerTimeout,
-      });
-
-      for await (const token of stream) {
-        result += token;
-        onToken(token);
+  try {
+    for (const config of uniqueConfigs) {
+      const remaining = OVERALL_DEADLINE - (Date.now() - t);
+      if (remaining < 5000 || deadlineController.signal.aborted) {
+        console.log(`[LLM] ⏰ ${agentId} stream overall deadline reached (${Date.now()-t}ms)`);
+        break;
       }
 
-      if (result.trim().length >= 20) {
-        console.log(`[LLM] ✓ ${agentId} via ${config.provider} (stream) ${Date.now()-t}ms ${result.length}c`);
-        return result;
+      try {
+        let result = '';
+        const providerTimeout = Math.min(remaining, PER_PROVIDER_TIMEOUT);
+        const stream = streamCompletion(msgs, {
+          provider: config.provider,
+          model: config.model,
+          temperature: config.temperature,
+          max_tokens: cfg.maxTokens,
+          timeoutMs: providerTimeout,
+          signal: deadlineController.signal, // Pass hard deadline signal
+        });
+
+        for await (const token of stream) {
+          result += token;
+          onToken(token);
+        }
+
+        if (result.trim().length >= 20) {
+          console.log(`[LLM] ✓ ${agentId} via ${config.provider} (stream) ${Date.now()-t}ms ${result.length}c`);
+          return result;
+        }
+        lastError = new Error('short/empty response');
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        console.log(`[LLM] ✗ ${agentId} stream via ${config.provider}: ${lastError.message.slice(0, 80)}`);
       }
-      lastError = new Error('short/empty response');
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
-      console.log(`[LLM] ✗ ${agentId} stream via ${config.provider}: ${lastError.message.slice(0, 80)}`);
     }
+
+    throw new Error(`Agent ${agentId} stream failed on all providers: ${lastError?.message || 'unknown'} (${Date.now()-t}ms)`);
+  } finally {
+    clearTimeout(deadlineTimer);
   }
-
-  throw new Error(`Agent ${agentId} stream failed on all providers: ${lastError?.message || 'unknown'} (${Date.now()-t}ms)`);
 }
 
 function extractSection(text: string, marker: string, nextMarkers: string[]): string {
