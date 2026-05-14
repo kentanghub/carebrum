@@ -540,36 +540,46 @@ export async function* runResearchPipeline(
       console.log(`[Pipe] Refinement needed, starting iteration ${iteration + 1}`);
     }
 
-    // ── Step 6: SOURCE VERIFICATION ────────────────────────────────────────
-    if (searchResults.length > 0 && depth !== 'quick') {
-      const verifier = agents.find(a => a.id === 'verifier')!;
-      if (verifier) {
-        verifier.status = 'running'; verifier.startTime = Date.now();
-        yield { type: 'agent_start', agentId: verifier.id, message: 'Verifying claims...' };
+    // ── Step 6: SOURCE VERIFICATION (always runs, not just when claims found) ──
+    const verifier = agents.find(a => a.id === 'verifier')!;
+    if (verifier) {
+      verifier.status = 'running'; verifier.startTime = Date.now();
+      yield { type: 'agent_start', agentId: verifier.id, message: 'Verifying claims against sources...' };
+      yield { type: 'progress', step: 4, message: 'Fact-checking...', progress: 88 };
 
-        // Extract key claims from the report
-        const claims = finalReport.split('\n')
-          .filter(l => l.startsWith('- ') || l.startsWith('* ') || l.match(/^\d+\./))
-          .slice(0, 10)
-          .map(l => l.replace(/^[-*\d.]+\s*/, '').trim())
-          .filter(l => l.length > 20)
-          .join('\n');
+      // Extract claims — be more lenient with what counts as a claim
+      const claimLines = finalReport.split('\n')
+        .filter(l => {
+          const trimmed = l.trim();
+          return (
+            trimmed.startsWith('- ') ||
+            trimmed.startsWith('* ') ||
+            trimmed.match(/^\d+\./) ||
+            (trimmed.startsWith('**') && trimmed.includes('**:')) ||
+            (trimmed.length > 30 && trimmed.length < 300 && !trimmed.startsWith('#') && !trimmed.startsWith('---') && !trimmed.startsWith('['))
+          );
+        })
+        .slice(0, 12)
+        .map(l => l.replace(/^[-*\d.]+\s*/, '').replace(/^\*\*/, '').replace(/\*\*$/, '').trim())
+        .filter(l => l.length > 10);
 
-        if (claims.length > 50) {
-          const verifyMsgs: AgentMessage[] = [
-            { role: 'system', content: 'You are a fact-checking specialist.' },
-            { role: 'user', content: getVerifierPrompt(req.query, claims, searchText.slice(0, 2000)) },
-          ];
+      const claims = claimLines.join('\n');
+      const verifyMsgs: AgentMessage[] = [
+        { role: 'system', content: 'You are a fact-checking specialist.' },
+        { role: 'user', content: getVerifierPrompt(
+          req.query,
+          claims || `Main topic: ${req.query}\nReport summary: ${finalReport.slice(0, 1000)}`,
+          searchText.slice(0, 2000)
+        ) },
+      ];
 
-          let verifyResult = '';
-          try { verifyResult = await callLLMWithFallback(verifyMsgs, depth, verifier.id); }
-          catch { verifyResult = 'Verification completed with limited sources.'; }
+      let verifyResult = '';
+      try { verifyResult = await callLLMWithFallback(verifyMsgs, depth, verifier.id); }
+      catch { verifyResult = 'Verification completed with limited sources.'; }
 
-          verifier.output = verifyResult; verifier.status = 'completed'; verifier.endTime = Date.now();
-          yield { type: 'agent_complete', agentId: verifier.id, data: verifyResult };
-          yield { type: 'verification', data: verifyResult };
-        }
-      }
+      verifier.output = verifyResult; verifier.status = 'completed'; verifier.endTime = Date.now();
+      yield { type: 'agent_complete', agentId: verifier.id, data: verifyResult };
+      yield { type: 'verification', data: verifyResult };
     }
 
     // ── Step 7: STRUCTURED DATA EXTRACTION ─────────────────────────────────

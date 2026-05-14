@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Network, Download, Maximize2 } from 'lucide-react';
+import { Network, Download, Maximize2, Minimize2 } from 'lucide-react';
 
 interface MindMapNode {
   id: string;
@@ -25,7 +25,7 @@ function parseReportToMindMap(report: string, query: string): MindMapNode {
 
   while ((match = h2Regex.exec(report)) !== null) {
     sections.push({
-      title: match[1].replace(/[📌📊✅📚💡🔍]/g, '').trim(),
+      title: match[1].replace(/[📌📊✅📚💡🔍🎯]/g, '').trim(),
       start: match.index + match[0].length,
       end: 0,
     });
@@ -50,7 +50,7 @@ function parseReportToMindMap(report: string, query: string): MindMapNode {
     while ((h3Match = h3Regex.exec(sectionText)) !== null) {
       node.children.push({
         id: `h3-${h3Match[1].slice(0, 20).replace(/\s/g, '-')}`,
-        label: h3Match[1].replace(/[0-9.]+/g, '').trim().slice(0, 40),
+        label: h3Match[1].replace(/[0-9.]+/g, '').trim().slice(0, 50),
         children: [],
       });
     }
@@ -60,8 +60,8 @@ function parseReportToMindMap(report: string, query: string): MindMapNode {
       const bulletRegex = /[-*]\s+(.+?)(?:\n|$)/g;
       let bulletMatch;
       let count = 0;
-      while ((bulletMatch = bulletRegex.exec(sectionText)) !== null && count < 5) {
-        const text = bulletMatch[1].trim().slice(0, 50);
+      while ((bulletMatch = bulletRegex.exec(sectionText)) !== null && count < 6) {
+        const text = bulletMatch[1].trim().slice(0, 60);
         if (text.length > 5) {
           node.children.push({
             id: `b-${count}`,
@@ -81,55 +81,111 @@ function parseReportToMindMap(report: string, query: string): MindMapNode {
   return root;
 }
 
-function MindMapSVG({ root }: { root: MindMapNode }) {
-  const centerX = 400;
-  const centerY = 200;
-  const radius = 150;
+function MindMapSVG({ root, expanded }: { root: MindMapNode; expanded: boolean }) {
+  const branchCount = root.children.length;
+
+  // Dynamic sizing based on content
+  const baseRadius = expanded ? 200 : 150;
+  const subRadius = expanded ? 90 : 60;
+  const centerX = expanded ? 500 : 400;
+  const centerY = expanded ? 400 : 250;
+
+  // Calculate dynamic viewBox height
+  const maxSubChildren = Math.max(...root.children.map(c => c.children.length), 0);
+  const viewWidth = expanded ? 1000 : 800;
+  const viewHeight = expanded
+    ? Math.max(800, centerY + baseRadius + subRadius + 100)
+    : Math.max(500, centerY + baseRadius + subRadius + 80);
 
   const mainNodes = root.children.map((child, i) => {
-    const angle = (i / root.children.length) * Math.PI * 2 - Math.PI / 2;
-    const x = centerX + Math.cos(angle) * radius;
-    const y = centerY + Math.sin(angle) * radius;
+    const angle = (i / branchCount) * Math.PI * 2 - Math.PI / 2;
+    const x = centerX + Math.cos(angle) * baseRadius;
+    const y = centerY + Math.sin(angle) * baseRadius;
     return { ...child, x, y, angle };
   });
 
   return (
-    <svg viewBox="0 0 800 400" className="w-full h-auto">
+    <svg viewBox={`0 0 ${viewWidth} ${viewHeight}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet">
+      {/* Background gradient */}
+      <defs>
+        <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="rgba(34, 197, 94, 0.15)" />
+          <stop offset="100%" stopColor="transparent" />
+        </radialGradient>
+      </defs>
+      <circle cx={centerX} cy={centerY} r={baseRadius + 50} fill="url(#centerGlow)" />
+
       {/* Central node */}
-      <circle cx={centerX} cy={centerY} r={30} fill="rgba(34, 197, 94, 0.2)" stroke="rgba(34, 197, 94, 0.6)" strokeWidth={2} />
-      <text x={centerX} y={centerY + 4} textAnchor="middle" fill="#4ade80" fontSize={10} fontWeight="bold">
-        {root.label.slice(0, 20)}
+      <circle cx={centerX} cy={centerY} r={35} fill="rgba(34, 197, 94, 0.2)" stroke="rgba(34, 197, 94, 0.6)" strokeWidth={2} />
+      <text x={centerX} y={centerY - 4} textAnchor="middle" fill="#4ade80" fontSize={expanded ? 11 : 9} fontWeight="bold">
+        {root.label.slice(0, 25)}
+      </text>
+      <text x={centerX} y={centerY + 10} textAnchor="middle" fill="#86efac" fontSize={7} opacity={0.7}>
+        {branchCount} topics
       </text>
 
       {/* Main branches */}
       {mainNodes.map((node, i) => (
         <g key={node.id}>
-          {/* Line to center */}
-          <line x1={centerX} y1={centerY} x2={node.x} y2={node.y} stroke="rgba(34, 197, 94, 0.3)" strokeWidth={1.5} />
+          {/* Animated line to center */}
+          <line x1={centerX} y1={centerY} x2={node.x} y2={node.y}
+            stroke="rgba(34, 197, 94, 0.3)" strokeWidth={1.5}
+            strokeDasharray="4,4" />
 
           {/* Node circle */}
-          <circle cx={node.x} cy={node.y} r={20} fill="rgba(34, 197, 94, 0.1)" stroke="rgba(34, 197, 94, 0.4)" strokeWidth={1.5} />
-          <text x={node.x} y={node.y + 4} textAnchor="middle" fill="#86efac" fontSize={8}>
-            {node.label.slice(0, 15)}
+          <circle cx={node.x} cy={node.y} r={expanded ? 28 : 22}
+            fill="rgba(34, 197, 94, 0.1)" stroke="rgba(34, 197, 94, 0.4)" strokeWidth={1.5} />
+          <text x={node.x} y={node.y + 4} textAnchor="middle" fill="#86efac"
+            fontSize={expanded ? 8 : 7}>
+            {node.label.slice(0, expanded ? 20 : 15)}
           </text>
 
           {/* Sub-branches */}
-          {node.children.slice(0, 4).map((child, j) => {
-            const subAngle = node.angle + (j - 1) * 0.4;
-            const subX = node.x + Math.cos(subAngle) * 60;
-            const subY = node.y + Math.sin(subAngle) * 60;
+          {node.children.slice(0, expanded ? 8 : 5).map((child, j) => {
+            const spread = expanded ? 0.5 : 0.4;
+            const subAngle = node.angle + (j - (node.children.length - 1) / 2) * spread;
+            const subX = node.x + Math.cos(subAngle) * subRadius;
+            const subY = node.y + Math.sin(subAngle) * subRadius;
+
+            // Keep within viewBox
+            const clampedX = Math.max(30, Math.min(viewWidth - 30, subX));
+            const clampedY = Math.max(30, Math.min(viewHeight - 30, subY));
+
             return (
               <g key={child.id}>
-                <line x1={node.x} y1={node.y} x2={subX} y2={subY} stroke="rgba(34, 197, 94, 0.15)" strokeWidth={1} />
-                <circle cx={subX} cy={subY} r={8} fill="rgba(34, 197, 94, 0.05)" stroke="rgba(34, 197, 94, 0.2)" strokeWidth={1} />
-                <text x={subX} y={subY + 3} textAnchor="middle" fill="#6ee7b7" fontSize={6}>
-                  {child.label.slice(0, 12)}
+                <line x1={node.x} y1={node.y} x2={clampedX} y2={clampedY}
+                  stroke="rgba(34, 197, 94, 0.15)" strokeWidth={1} />
+                <circle cx={clampedX} cy={clampedY} r={expanded ? 10 : 8}
+                  fill="rgba(34, 197, 94, 0.05)" stroke="rgba(34, 197, 94, 0.2)" strokeWidth={1} />
+                <text x={clampedX} y={clampedY + 3} textAnchor="middle" fill="#6ee7b7"
+                  fontSize={expanded ? 7 : 6}>
+                  {child.label.slice(0, expanded ? 18 : 12)}
                 </text>
               </g>
             );
           })}
+
+          {/* Show count if more children hidden */}
+          {node.children.length > (expanded ? 8 : 5) && (() => {
+            const overflowAngle = node.angle + 0.6;
+            const ox = node.x + Math.cos(overflowAngle) * (subRadius + 20);
+            const oy = node.y + Math.sin(overflowAngle) * (subRadius + 20);
+            return (
+              <text x={ox} y={oy} textAnchor="middle" fill="#4ade80" fontSize={6} opacity={0.6}>
+                +{node.children.length - (expanded ? 8 : 5)} more
+              </text>
+            );
+          })()}
         </g>
       ))}
+
+      {/* Legend */}
+      <g transform={`translate(10, ${viewHeight - 30})`}>
+        <circle cx={6} cy={6} r={4} fill="rgba(34, 197, 94, 0.2)" stroke="rgba(34, 197, 94, 0.4)" />
+        <text x={16} y={9} fill="#6b7280" fontSize={7}>Main topic</text>
+        <circle cx={90} cy={6} r={3} fill="rgba(34, 197, 94, 0.05)" stroke="rgba(34, 197, 94, 0.2)" />
+        <text x={99} y={9} fill="#6b7280" fontSize={7}>Sub-topic</text>
+      </g>
     </svg>
   );
 }
@@ -143,6 +199,7 @@ export default function MindMapView({ report, query }: MindMapViewProps) {
       <div className="text-center py-8">
         <Network className="w-8 h-8 text-gray-600 mx-auto mb-3" />
         <p className="text-xs text-gray-500">Not enough structure for mind map</p>
+        <p className="text-[10px] text-gray-600 mt-1">Try a research with headings (## and ###)</p>
       </div>
     );
   }
@@ -155,7 +212,7 @@ export default function MindMapView({ report, query }: MindMapViewProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `carebrum-mindmap-${Date.now()}.svg`;
+    a.download = `cerebrum-mindmap-${Date.now()}.svg`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -166,14 +223,18 @@ export default function MindMapView({ report, query }: MindMapViewProps) {
         <div className="flex items-center gap-2">
           <Network className="w-4 h-4 text-green-400" />
           <h3 className="text-sm font-semibold text-gray-300">Mind Map</h3>
+          <span className="text-[10px] text-gray-500 px-2 py-0.5 rounded-full bg-white/[0.03] border border-white/[0.04]">
+            {root.children.length} branches
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setExpanded(!expanded)}
-            className="text-[10px] text-gray-400 hover:text-green-400 px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04]">
-            <Maximize2 className="w-3 h-3" />
+            className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-green-400 px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] transition-colors min-h-[44px]">
+            {expanded ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+            {expanded ? 'Compact' : 'Expand'}
           </button>
           <button onClick={exportSVG}
-            className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-green-400 px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+            className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-green-400 px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.04] transition-colors min-h-[44px]">
             <Download className="w-3 h-3" /> SVG
           </button>
         </div>
@@ -181,11 +242,27 @@ export default function MindMapView({ report, query }: MindMapViewProps) {
 
       <motion.div
         id="mindmap-svg"
-        className={`rounded-lg bg-white/[0.01] border border-white/[0.04] p-2 overflow-hidden ${expanded ? 'max-h-none' : 'max-h-[300px]'}`}
-        animate={{ height: expanded ? 'auto' : 300 }}
+        className={`rounded-lg bg-white/[0.01] border border-white/[0.04] p-2 overflow-auto custom-scrollbar ${
+          expanded ? 'max-h-none' : 'max-h-[500px]'
+        }`}
+        animate={{ height: expanded ? 'auto' : 500 }}
+        transition={{ duration: 0.3 }}
       >
-        <MindMapSVG root={root} />
+        <MindMapSVG root={root} expanded={expanded} />
       </motion.div>
+
+      {/* Sub-topic list for accessibility */}
+      <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+        {root.children.map((branch, i) => (
+          <div key={branch.id} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.02] border border-white/[0.03]">
+            <span className="w-2 h-2 rounded-full bg-green-500/30 flex-shrink-0" />
+            <span className="text-[10px] text-gray-400 truncate">{branch.label}</span>
+            {branch.children.length > 0 && (
+              <span className="text-[9px] text-gray-600 ml-auto">{branch.children.length}</span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
