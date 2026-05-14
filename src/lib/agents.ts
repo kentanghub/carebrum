@@ -467,7 +467,7 @@ export async function* runResearchPipeline(
     }
 
     // ── Step 2: ORCHESTRATOR ───────────────────────────────────────────────
-    const orch = agents.find(a => a.id === 'orchestrator')!;
+    const orch = agents.find(a => a.id === 'orchestrator') || agents[0];
     orch.status = 'running'; orch.startTime = Date.now();
     yield { type: 'agent_start', agentId: orch.id, message: 'Creating research plan...' };
     yield { type: 'progress', step: 1, progress: 30 };
@@ -490,7 +490,7 @@ export async function* runResearchPipeline(
     yield { type: 'progress', step: 1, progress: 40 };
 
     // ── Step 3: EXTRACTOR ──────────────────────────────────────────────────
-    const extr = agents.find(a => a.id === 'multimodal_extractor')!;
+    const extr = agents.find(a => a.id === 'multimodal_extractor') || agents[1];
     extr.status = 'running'; extr.startTime = Date.now();
     yield { type: 'agent_start', agentId: extr.id, message: 'Extracting data from sources...' };
     yield { type: 'progress', step: 2, progress: 45 };
@@ -509,7 +509,7 @@ export async function* runResearchPipeline(
     yield { type: 'progress', step: 2, progress: 55 };
 
     // ── Step 4: REASONER (streaming) ──────────────────────────────────────
-    const reas = agents.find(a => a.id === 'reasoning_engine')!;
+    const reas = agents.find(a => a.id === 'reasoning_engine') || agents[2];
     reas.status = 'running'; reas.startTime = Date.now();
     yield { type: 'agent_start', agentId: reas.id, message: 'Deep analysis...' };
     yield { type: 'progress', step: 2, progress: 58 };
@@ -539,7 +539,7 @@ export async function* runResearchPipeline(
       yield { type: 'iteration', iteration, maxIterations, message: `Iteration ${iteration}/${maxIterations}` };
 
       // SYNTHESIZER (streaming)
-      const synth = agents.find(a => a.id === 'synthesizer')!;
+      const synth = agents.find(a => a.id === 'synthesizer') || agents[3];
       synth.status = 'running'; synth.startTime = Date.now();
       yield { type: 'agent_start', agentId: synth.id, message: iteration > 1 ? `Refining report (iteration ${iteration})...` : 'Writing report...' };
       yield { type: 'progress', step: 3, progress: 70 + (iteration * 5) };
@@ -594,7 +594,7 @@ export async function* runResearchPipeline(
     }
 
     // ── Step 6: SOURCE VERIFICATION (always runs, not just when claims found) ──
-    const verifier = agents.find(a => a.id === 'verifier')!;
+    const verifier = agents.find(a => a.id === 'verifier') || agents[5];
     if (verifier) {
       verifier.status = 'running'; verifier.startTime = Date.now();
       yield { type: 'agent_start', agentId: verifier.id, message: 'Verifying claims against sources...' };
