@@ -344,10 +344,7 @@ export async function completion(
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     
     try {
-      // Google Gemini uses different endpoint format
-      const url = provider.name.includes('Google') 
-        ? `${provider.baseUrl}/chat/completions`
-        : `${provider.baseUrl}/chat/completions`;
+      const url = `${provider.baseUrl}/chat/completions`;
       
       const response = await fetch(url, {
         method: 'POST',

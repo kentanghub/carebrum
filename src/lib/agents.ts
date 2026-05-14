@@ -83,24 +83,50 @@ async function callLLMWithFallback(
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
 
-  try {
-    const result = await completion(msgs, {
-      provider: modelCfg.provider,
-      model: modelCfg.model,
-      temperature: modelCfg.temperature,
-      max_tokens: cfg.maxTokens,
-      timeoutMs: cfg.timeoutMs,
-    });
+  // Try primary provider first, then fallback to free providers
+  const configsToTry = [
+    { provider: modelCfg.provider, model: modelCfg.model, temperature: modelCfg.temperature },
+    // Fallback 1: Groq (free, fast)
+    { provider: 'groq', temperature: modelCfg.temperature },
+    // Fallback 2: Google Gemini (free)
+    { provider: 'google', temperature: modelCfg.temperature },
+    // Fallback 3: OpenRouter (free models)
+    { provider: 'openrouter', temperature: modelCfg.temperature },
+  ];
 
-    if (result.trim().length >= 20) {
-      console.log(`[LLM] ✓ ${agentId} ${Date.now()-t}ms ${result.length}c`);
-      return result;
+  // Deduplicate by provider name, keeping order
+  const seen = new Set<string>();
+  const uniqueConfigs = configsToTry.filter(c => {
+    if (!c.provider || seen.has(c.provider)) return false;
+    seen.add(c.provider);
+    return true;
+  });
+
+  let lastError: Error | null = null;
+
+  for (const config of uniqueConfigs) {
+    try {
+      const result = await completion(msgs, {
+        provider: config.provider,
+        model: config.model,
+        temperature: config.temperature,
+        max_tokens: cfg.maxTokens,
+        timeoutMs: cfg.timeoutMs,
+      });
+
+      if (result.trim().length >= 20) {
+        console.log(`[LLM] ✓ ${agentId} via ${config.provider} ${Date.now()-t}ms ${result.length}c`);
+        return result;
+      }
+      lastError = new Error('short/empty response');
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.log(`[LLM] ✗ ${agentId} via ${config.provider}: ${lastError.message.slice(0, 80)}`);
+      // Continue to next provider
     }
-    throw new Error('short/empty response');
-  } catch (e) {
-    console.error(`[LLM] ✗ ${agentId}: ${e instanceof Error ? e.message : 'error'}`);
-    throw new Error(`Agent ${agentId} failed: ${e instanceof Error ? e.message : 'error'} (${Date.now()-t}ms)`);
   }
+
+  throw new Error(`Agent ${agentId} failed on all providers: ${lastError?.message || 'unknown'} (${Date.now()-t}ms)`);
 }
 
 async function callLLMStreamWithCallback(
@@ -112,30 +138,51 @@ async function callLLMStreamWithCallback(
   const cfg = DEPTH[depth] || DEPTH.standard;
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
-  let result = '';
 
-  try {
-    const stream = streamCompletion(msgs, {
-      provider: modelCfg.provider,
-      model: modelCfg.model,
-      temperature: modelCfg.temperature,
-      max_tokens: cfg.maxTokens,
-    });
+  // Try primary provider, fallback to free providers
+  const configsToTry = [
+    { provider: modelCfg.provider, model: modelCfg.model, temperature: modelCfg.temperature },
+    { provider: 'groq', temperature: modelCfg.temperature },
+    { provider: 'google', temperature: modelCfg.temperature },
+    { provider: 'openrouter', temperature: modelCfg.temperature },
+  ];
 
-    for await (const token of stream) {
-      result += token;
-      onToken(token);
+  const seen = new Set<string>();
+  const uniqueConfigs = configsToTry.filter(c => {
+    if (!c.provider || seen.has(c.provider)) return false;
+    seen.add(c.provider);
+    return true;
+  });
+
+  let lastError: Error | null = null;
+
+  for (const config of uniqueConfigs) {
+    try {
+      let result = '';
+      const stream = streamCompletion(msgs, {
+        provider: config.provider,
+        model: config.model,
+        temperature: config.temperature,
+        max_tokens: cfg.maxTokens,
+      });
+
+      for await (const token of stream) {
+        result += token;
+        onToken(token);
+      }
+
+      if (result.trim().length >= 20) {
+        console.log(`[LLM] ✓ ${agentId} via ${config.provider} (stream) ${Date.now()-t}ms ${result.length}c`);
+        return result;
+      }
+      lastError = new Error('short/empty response');
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.log(`[LLM] ✗ ${agentId} stream via ${config.provider}: ${lastError.message.slice(0, 80)}`);
     }
-
-    if (result.trim().length >= 20) {
-      console.log(`[LLM] ✓ ${agentId} (stream) ${Date.now()-t}ms ${result.length}c`);
-      return result;
-    }
-    throw new Error('short/empty response');
-  } catch (e) {
-    console.error(`[LLM] ✗ ${agentId} stream: ${e instanceof Error ? e.message : 'error'}`);
-    throw e;
   }
+
+  throw new Error(`Agent ${agentId} stream failed on all providers: ${lastError?.message || 'unknown'} (${Date.now()-t}ms)`);
 }
 
 function extractSection(text: string, marker: string, nextMarkers: string[]): string {

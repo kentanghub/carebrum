@@ -132,9 +132,13 @@ class KnowledgeGraphStore {
 
   /** Import from JSON */
   import(json: string): void {
-    const nodes: KnowledgeNode[] = JSON.parse(json);
-    for (const node of nodes) {
-      this.nodes.set(node.id, node);
+    try {
+      const nodes: KnowledgeNode[] = JSON.parse(json);
+      for (const node of nodes) {
+        this.nodes.set(node.id, node);
+      }
+    } catch (e) {
+      console.error('[KnowledgeGraph] Failed to import:', e);
     }
   }
 }
