@@ -82,8 +82,8 @@ async function callLLMWithFallback(
   const cfg = DEPTH[depth] || DEPTH.standard;
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
-  const OVERALL_DEADLINE = 90000; // 90 seconds max for entire fallback chain
-  const PER_PROVIDER_TIMEOUT = 20000; // 20 seconds per provider
+  const OVERALL_DEADLINE = 180000; // 3 min max — reasoning models (Kimi K2.6) need ~35s per call
+  const PER_PROVIDER_TIMEOUT = 55000; // 55s per provider — allows for reasoning model latency
 
   // Hard deadline: abort ALL providers when this fires
   const deadlineController = new AbortController();
@@ -157,8 +157,8 @@ async function callLLMStreamWithCallback(
   const cfg = DEPTH[depth] || DEPTH.standard;
   const modelCfg = getAgentModelConfig(agentId, depth);
   const t = Date.now();
-  const OVERALL_DEADLINE = 90000;
-  const PER_PROVIDER_TIMEOUT = 20000;
+  const OVERALL_DEADLINE = 180000;
+  const PER_PROVIDER_TIMEOUT = 55000;
 
   // Hard deadline: abort ALL providers when this fires
   const deadlineController = new AbortController();

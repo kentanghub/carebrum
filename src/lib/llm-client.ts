@@ -411,7 +411,9 @@ export async function completion(
       clearTimeout(timeoutId);
       config.signal?.removeEventListener('abort', onExternalAbort);
       
-      const content = data.choices?.[0]?.message?.content || '';
+      // Handle reasoning models (e.g. Kimi K2.6) that put thinking in reasoning_content
+      const message = data.choices?.[0]?.message || {};
+      const content = message.content || message.reasoning_content || '';
       const usage = data.usage;
       
       if (usage) {
@@ -527,7 +529,9 @@ export async function* streamCompletion(
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6));
-            const content = data.choices?.[0]?.delta?.content;
+            // Handle reasoning models: capture both content and reasoning_content
+            const delta = data.choices?.[0]?.delta || {};
+            const content = delta.content || delta.reasoning_content;
             if (content) {
               totalContent += content;
               yield content;
